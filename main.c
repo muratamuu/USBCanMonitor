@@ -1,4 +1,7 @@
+#pragma config FOSC = ECH
 #pragma config PLLEN = ON
+#pragma config FCMEN = ON
+#pragma config WDTEN = OFF
 
 #include <xc.h>
 #include "usb_cdc.h"
@@ -45,7 +48,7 @@ struct canmsg_t
   int str_idx;
 };
 
-#define MSG_MAX (3)
+#define MSG_MAX (8)
 struct canmsg_t msgbuffer[MSG_MAX];
 int recv_count = 0;
 int recv_idx = 0;
@@ -69,7 +72,7 @@ void main(void)
 
   // 12番ピン(LED)を出力に設定
   TRISBbits.TRISB5 = 0;
-  LATBbits.LATB5 = 1;
+  //LATBbits.LATB5 = 1;
 
   // SPI設定
   SSPSTATbits.CKE   = 1;  // クロックがアクティブからアイドルで送信する
@@ -95,6 +98,8 @@ void main(void)
   // MCP2515初期化
   mcp2515_init();
 
+  OSCCON = 0x30;
+
   // USB初期化
   usb_init();
 
@@ -113,13 +118,12 @@ void main(void)
       }
     }
 
-
     // USB送信処理
-    while (usb_ep1_ready() && recv_count > 0) {
+    if (usb_ep1_ready() && recv_count > 0) {
       struct canmsg_t* msg = &msgbuffer[send_idx];
       usb_putch(msg->str[msg->str_idx++]);
       if (msg->str_idx == MSG_STR_MAX) {
-        send_idx = (send_idx) + 1 % MSG_MAX;
+        send_idx = (send_idx + 1) % MSG_MAX;
         recv_count--;
       }
     }
@@ -196,7 +200,7 @@ void mcp2515_init()
   mcp2515_writereg(CNF2, 0x9A);
   mcp2515_writereg(CNF3, 0x03);
   // ノーマルモードに移行
-  mcp2515_writereg(CANCTRL, 0x05);
+  mcp2515_modreg(CANCTRL, 0xE0, 0x00);
 }
 
 void mcp2515_recv(struct canmsg_t* msg)
@@ -226,5 +230,6 @@ void mcp2515_recv(struct canmsg_t* msg)
     msg->str[6+(i*2)+1] = to_ascii[(msg->data[i] >> 0) & 0x0F];
   }
   msg->str[22] = '\r';
+  //msg->str[23] = '\n';
   msg->str_idx = 0;
 }
