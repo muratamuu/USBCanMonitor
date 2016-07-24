@@ -1,6 +1,7 @@
-#include <htc.h>
+#pragma config PLLEN = ON
+
+#include <xc.h>
 #include "usb_cdc.h"
-#include "usbtin.h"
 
 // SPIコマンド
 #define SPI_RESET       (0xC0) // リセット
@@ -29,8 +30,7 @@
 #define RXB1CTRL (0x70) // BIT_MOD可能
 
 // システムクロック48MHz (__delay_msマクロ用)
-//#define _XTAL_FREQ 48000000
-
+#define _XTAL_FREQ 48000000
 
 typedef unsigned char  BYTE;
 typedef unsigned short WORD;
@@ -90,10 +90,10 @@ void main(void)
   SPI_CS = 1;
 
   // MCP2515リセット
-  //mcp2515_reset();
+  mcp2515_reset();
 
   // MCP2515初期化
-  //mcp2515_init();
+  mcp2515_init();
 
   // USB初期化
   usb_init();
@@ -196,7 +196,7 @@ void mcp2515_init()
   mcp2515_writereg(CNF2, 0x9A);
   mcp2515_writereg(CNF3, 0x03);
   // ノーマルモードに移行
-  mcp2515_writereg(CANCTRL, 0x00);
+  mcp2515_writereg(CANCTRL, 0x05);
 }
 
 void mcp2515_recv(struct canmsg_t* msg)
