@@ -1,7 +1,5 @@
-#pragma config FOSC = ECH
 #pragma config PLLEN = ON
 #pragma config FCMEN = ON
-#pragma config WDTEN = OFF
 
 #include <xc.h>
 #include "usb_cdc.h"
@@ -66,13 +64,14 @@ void mcp2515_recv(struct canmsg_t* msg);
 
 void main(void)
 {
+
   // アナログピンをデジタルに設定
   ANSEL  = 0x00;
   ANSELH = 0x00;
 
   // 12番ピン(LED)を出力に設定
   TRISBbits.TRISB5 = 0;
-  //LATBbits.LATB5 = 1;
+  LATBbits.LATB5 = 1;
 
   // SPI設定
   SSPSTATbits.CKE   = 1;  // クロックがアクティブからアイドルで送信する
