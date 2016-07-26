@@ -56,22 +56,20 @@ const char* to_ascii = "0123456789ABCDEF";
 
 BYTE spi_transmit(BYTE c);
 void mcp2515_reset();
+void mcp2515_init();
 void mcp2515_writereg(BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE addr);
 void mcp2515_modreg(BYTE addr, BYTE mask, BYTE data);
-void mcp2515_init();
-void mcp2515_recv(struct canmsg_t* msg);
+int mcp2515_recv(struct canmsg_t* msg);
 
 void main(void)
 {
-
   // アナログピンをデジタルに設定
   ANSEL  = 0x00;
   ANSELH = 0x00;
 
   // 12番ピン(LED)を出力に設定
   TRISBbits.TRISB5 = 0;
-  LATBbits.LATB5 = 1;
 
   // SPI設定
   SSPSTATbits.CKE   = 1;  // クロックがアクティブからアイドルで送信する
@@ -102,20 +100,37 @@ void main(void)
   // USB初期化
   usb_init();
 
+  // メインループ開始
+  LATBbits.LATB5 = 1;
+
   while (1) {
     usb_process();
 
     // 受信処理
-    if (!PORTCbits.RC2) { // 14番ピンGND (MCP2515受信割り込み)
-      if (recv_count < MSG_MAX) {
-        mcp2515_recv(&msgbuffer[recv_idx]);
-        recv_count++;
-        recv_idx = (recv_idx + 1) % MSG_MAX;
-      } else {
-        // バッファオーバー
-        mcp2515_modreg(BFPCTRL, 0x14, 0x14);
+    if (!PORTCbits.RC2) { // 14番ピンGND (MCP2515エラーor受信割り込み)
+      // 割り込み要因チェック
+      BYTE reason = mcp2515_readreg(CANINTF);
+
+      if (reason & 0x20) { // エラー割り込み
+        mcp2515_modreg(CANINTF, 0x20, 0x00); // エラーフラグを落とす
+        if (mcp2515_readreg(EFLG) & 0xC0)
+          // MCP2515受信バッファオーバー
+          mcp2515_modreg(BFPCTRL, 0x14, 0x14);
       }
-    }
+
+      if (reason & 0x03) { // 受信割り込み
+        if (recv_count < MSG_MAX) {
+          if (mcp2515_recv(&msgbuffer[recv_idx]) > 0) {
+            recv_count++;
+            recv_idx = (recv_idx + 1) % MSG_MAX;
+          }
+        } else {
+          // PIC内受信バッファオーバー
+          mcp2515_modreg(BFPCTRL, 0x14, 0x14);
+        }
+      }
+
+    } // 受信処理END
 
     // USB送信処理
     if (usb_ep1_ready() && recv_count > 0) {
@@ -155,6 +170,24 @@ void mcp2515_reset()
   while (++data);
 }
 
+void mcp2515_init()
+{
+  // コンフィグモードに移行
+  // クロック出力 Fosc/2 24MHz/2=12MHz
+  mcp2515_writereg(CANCTRL, 0x85);
+  // RXB0,RXB1でフィルタマスクを使用しない
+  mcp2515_modreg(RXB0CTRL, 0x60, 0x60);
+  mcp2515_modreg(RXB1CTRL, 0x60, 0x60);
+  // エラー及びRXB0,RXB1で受信割り込み設定
+  mcp2515_writereg(CANINTE, 0x23);
+  // CANビットレート設定
+  mcp2515_writereg(CNF1, 0xC1);
+  mcp2515_writereg(CNF2, 0x9A);
+  mcp2515_writereg(CNF3, 0x03);
+  // ノーマルモードに移行
+  mcp2515_modreg(CANCTRL, 0xE0, 0x00);
+}
+
 void mcp2515_writereg(BYTE addr, BYTE data)
 {
   SPI_CS = 0;
@@ -184,25 +217,7 @@ void mcp2515_modreg(BYTE addr, BYTE mask, BYTE data)
   SPI_CS = 1;
 }
 
-void mcp2515_init()
-{
-  // コンフィグモードに移行
-  // クロック出力 Fosc/2 24MHz/2=12MHz
-  mcp2515_writereg(CANCTRL, 0x85);
-  // RXB0,RXB1でフィルタマスクを使用しない
-  mcp2515_modreg(RXB0CTRL, 0x60, 0x60);
-  mcp2515_modreg(RXB1CTRL, 0x60, 0x60);
-  // RXB0,RXB1で受信割り込み設定
-  mcp2515_writereg(CANINTE, 0x03);
-  // CANビットレート設定
-  mcp2515_writereg(CNF1, 0xC1);
-  mcp2515_writereg(CNF2, 0x9A);
-  mcp2515_writereg(CNF3, 0x03);
-  // ノーマルモードに移行
-  mcp2515_modreg(CANCTRL, 0xE0, 0x00);
-}
-
-void mcp2515_recv(struct canmsg_t* msg)
+int mcp2515_recv(struct canmsg_t* msg)
 {
   SPI_CS = 0;
   spi_transmit(SPI_RXB0_READ); // RXB0受信
@@ -231,4 +246,6 @@ void mcp2515_recv(struct canmsg_t* msg)
   msg->str[22] = '\r';
   //msg->str[23] = '\n';
   msg->str_idx = 0;
+
+  return 1;
 }

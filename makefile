@@ -11,5 +11,5 @@ flash:
 	mphidflash -write $(TARGET) -n -reset
 
 clean:
-	rm -f *.hex funclist *.cof *.hxl *.p1 *.sdb startup.* *.lst *.pre *.sym *.d *.as *.cmf
+	rm -f *.hex funclist *.cof *.hxl *.p1 *.sdb startup.* *.lst *.pre *.sym *.d *.as *.cmf *.obj
 
