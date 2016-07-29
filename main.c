@@ -134,20 +134,18 @@ void main(void)
         mcp2515_modreg(CANINTF, 0x20, 0x00); // エラーフラグを落とす
         if (mcp2515_readreg(EFLG) & 0xC0)
           // MCP2515受信バッファオーバー
-          mcp2515_modreg(BFPCTRL, 0x14, 0x14);
+          mcp2515_modreg(BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
       }
 
       if (reason & 0x03) { // 受信割り込み
         if (recv_count < MSG_MAX) {
-          LATBbits.LATB5 = 1;
           if (mcp2515_recv(&msgbuffer[recv_idx]) > 0) {
             recv_count++;
             recv_idx = (recv_idx + 1) % MSG_MAX;
           }
-          LATBbits.LATB5 = 0;
         } else {
           // PIC内受信バッファオーバー
-          mcp2515_modreg(BFPCTRL, 0x14, 0x14);
+          mcp2515_modreg(BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
         }
       }
 
@@ -220,8 +218,9 @@ void mcp2515_init()
   mcp2515_writereg(CNF1, 0xC1);
   mcp2515_writereg(CNF2, 0x9A);
   mcp2515_writereg(CNF3, 0x03);
-  // ノーマルモードに移行
-  //mcp2515_modreg(CANCTRL, 0xE0, 0x00);
+  // RXB0割り込みピン(11番)を有効化(受信時にLEDを点滅させる)
+  // RXB1割り込みピン(10番)をデジタル出力に設定
+  mcp2515_modreg(BFPCTRL, 0x0F, 0x0D);
 }
 
 void mcp2515_writereg(BYTE addr, BYTE data)
@@ -289,11 +288,13 @@ void parseline(char* line)
     // 通常受信モード(ACKを返す)
     mcp2515_modreg(CANCTRL, 0xE0, 0x00);
     mode = MODE_NORMAL;
+    LATBbits.LATB5 = 1; // Main-LED点灯
   }
   else if (line[0] == 'L' && mode == MODE_CONFIG) {
     // リスンオンリーモード
     mcp2515_modreg(CANCTRL, 0xE0, 0x60);
     mode = MODE_LISTEN;
+    LATBbits.LATB5 = 1; // Main-LED点灯
   }
   else if (line[0] == 'C') {
     // 受信停止(コンフィグモードに戻す)
@@ -303,6 +304,13 @@ void parseline(char* line)
     recv_idx = 0;
     send_idx = 0;
     is_sending = 0;
+    LATBbits.LATB5 = 0; // Main-LED消灯
   }
+  else if (line[0] == 'R') {
+    // リセット
+    UCON = 0;
+    _delay(1000);
+    RESET();
+ }
   usb_putch('\r');
 }
