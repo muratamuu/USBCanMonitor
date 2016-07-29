@@ -36,6 +36,7 @@
 typedef unsigned char  BYTE;
 typedef unsigned short WORD;
 
+// CANメッセージ構造体
 #define MSG_STR_MAX (23) // 11*2+1
 struct canmsg_t
 {
@@ -46,13 +47,29 @@ struct canmsg_t
   int str_idx;
 };
 
+// CANメッセージバッファ
 #define MSG_MAX (8)
 struct canmsg_t msgbuffer[MSG_MAX];
+
+// 処理進行状態変数
 int recv_count = 0;
 int recv_idx = 0;
 int send_idx = 0;
+int is_sending = 0;
 
+// 文字列変換テーブル
 const char* to_ascii = "0123456789ABCDEF";
+
+// USB受信バッファ
+#define LINE_MAX (8)
+char line[LINE_MAX];
+int linepos = 0;
+
+// MCP2515モード状態
+#define MODE_CONFIG (0)
+#define MODE_NORMAL (1)
+#define MODE_LISTEN (2)
+int mode = MODE_CONFIG;
 
 BYTE spi_transmit(BYTE c);
 void mcp2515_reset();
@@ -61,6 +78,7 @@ void mcp2515_writereg(BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE addr);
 void mcp2515_modreg(BYTE addr, BYTE mask, BYTE data);
 int mcp2515_recv(struct canmsg_t* msg);
+void parseline(char* line);
 
 void main(void)
 {
@@ -70,6 +88,7 @@ void main(void)
 
   // 12番ピン(LED)を出力に設定
   TRISBbits.TRISB5 = 0;
+  LATBbits.LATB5 = 0;
 
   // SPI設定
   SSPSTATbits.CKE   = 1;  // クロックがアクティブからアイドルで送信する
@@ -101,7 +120,7 @@ void main(void)
   usb_init();
 
   // メインループ開始
-  LATBbits.LATB5 = 1;
+  //LATBbits.LATB5 = 1;
 
   while (1) {
     usb_process();
@@ -120,10 +139,12 @@ void main(void)
 
       if (reason & 0x03) { // 受信割り込み
         if (recv_count < MSG_MAX) {
+          LATBbits.LATB5 = 1;
           if (mcp2515_recv(&msgbuffer[recv_idx]) > 0) {
             recv_count++;
             recv_idx = (recv_idx + 1) % MSG_MAX;
           }
+          LATBbits.LATB5 = 0;
         } else {
           // PIC内受信バッファオーバー
           mcp2515_modreg(BFPCTRL, 0x14, 0x14);
@@ -133,12 +154,27 @@ void main(void)
     } // 受信処理END
 
     // USB送信処理
-    if (usb_ep1_ready() && recv_count > 0) {
+    while (usb_ep1_ready() && recv_count > 0) {
+      is_sending = 1;
       struct canmsg_t* msg = &msgbuffer[send_idx];
-      usb_putch(msg->str[msg->str_idx++]);
-      if (msg->str_idx == MSG_STR_MAX) {
+      if (usb_putch(msg->str[msg->str_idx++]) == '\r') {
         send_idx = (send_idx + 1) % MSG_MAX;
         recv_count--;
+        is_sending = 0;
+      }
+    }
+
+    // USB受信処理(メッセージ送信中は処理しない)
+    while (usb_chReceived() && !is_sending) {
+      BYTE c = usb_getch();
+      if (c == '\r') {
+        line[linepos] = 0;
+        parseline(line);
+        linepos = 0;
+      } else if (c != '\n') {
+        line[linepos] = c;
+        if (linepos < LINE_MAX - 1)
+          linepos++;
       }
     }
 
@@ -185,7 +221,7 @@ void mcp2515_init()
   mcp2515_writereg(CNF2, 0x9A);
   mcp2515_writereg(CNF3, 0x03);
   // ノーマルモードに移行
-  mcp2515_modreg(CANCTRL, 0xE0, 0x00);
+  //mcp2515_modreg(CANCTRL, 0xE0, 0x00);
 }
 
 void mcp2515_writereg(BYTE addr, BYTE data)
@@ -233,19 +269,40 @@ int mcp2515_recv(struct canmsg_t* msg)
   SPI_CS = 1;
 
   // 文字列化
-  msg->str[0] = to_ascii[(msg->id  >> 12) & 0x0F];
-  msg->str[1] = to_ascii[(msg->id  >> 8)  & 0x0F];
-  msg->str[2] = to_ascii[(msg->id  >> 4)  & 0x0F];
-  msg->str[3] = to_ascii[(msg->id  >> 0)  & 0x0F];
-  msg->str[4] = to_ascii[(msg->dlc >> 4)  & 0x0F];
-  msg->str[5] = to_ascii[(msg->dlc >> 0)  & 0x0F];
-  for (int i = 0; i < 8; i++) {
-    msg->str[6+(i*2)]   = to_ascii[(msg->data[i] >> 4) & 0x0F];
-    msg->str[6+(i*2)+1] = to_ascii[(msg->data[i] >> 0) & 0x0F];
+  msg->str[0] = to_ascii[(msg->id >> 8) & 0x0F];
+  msg->str[1] = to_ascii[(msg->id >> 4) & 0x0F];
+  msg->str[2] = to_ascii[(msg->id >> 0) & 0x0F];
+  msg->str[3] = to_ascii[msg->dlc];
+  for (int i = 0; i < msg->dlc; i++) {
+    msg->str[4+(i*2)]   = to_ascii[(msg->data[i] >> 4) & 0x0F];
+    msg->str[4+(i*2)+1] = to_ascii[(msg->data[i] >> 0) & 0x0F];
   }
-  msg->str[22] = '\r';
-  //msg->str[23] = '\n';
+  msg->str[4+(msg->dlc*2)] = '\r';
   msg->str_idx = 0;
 
   return 1;
+}
+
+void parseline(char* line)
+{
+  if (line[0] == 'O' && mode == MODE_CONFIG) {
+    // 通常受信モード(ACKを返す)
+    mcp2515_modreg(CANCTRL, 0xE0, 0x00);
+    mode = MODE_NORMAL;
+  }
+  else if (line[0] == 'L' && mode == MODE_CONFIG) {
+    // リスンオンリーモード
+    mcp2515_modreg(CANCTRL, 0xE0, 0x60);
+    mode = MODE_LISTEN;
+  }
+  else if (line[0] == 'C') {
+    // 受信停止(コンフィグモードに戻す)
+    mcp2515_modreg(CANCTRL, 0xE0, 0x80);
+    mode = MODE_CONFIG;
+    recv_count = 0;
+    recv_idx = 0;
+    send_idx = 0;
+    is_sending = 0;
+  }
+  usb_putch('\r');
 }

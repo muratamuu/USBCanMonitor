@@ -20,7 +20,7 @@
 #ifndef _USB_CDC_
 #define _USB_CDC_
 
-extern void usb_putch(unsigned char ch);
+extern unsigned char usb_putch(unsigned char ch);
 extern void usb_putstr(char * s);
 extern unsigned char usb_chReceived();
 extern unsigned char usb_getch();

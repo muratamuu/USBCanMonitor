@@ -392,11 +392,11 @@ void usb_ep1_flush() {
  *
  * @param ch Character to send
  */
-void usb_putch(unsigned char ch) {
+unsigned char usb_putch(unsigned char ch) {
 
     if (epbd[EPBD_EP1_IN_EVEN + current_ep1_buffer].stat & 0x80) {
         // overflow! TODO: signal overflow (->errorflags?)        
-        return;
+        return ch;
     }
     
     ep1in_buffer[current_ep1_buffer][txbuffer_writepos] = ch;
@@ -407,6 +407,7 @@ void usb_putch(unsigned char ch) {
     if (txbuffer_writepos == EP_BUFFERSIZE_BULK) {
         usb_ep1_flush();
     }
+    return ch;
 }
 
 /**
