@@ -3,6 +3,7 @@
 
 #include <xc.h>
 #include "usb_cdc.h"
+#include <string.h>
 
 // SPIコマンド
 #define SPI_RESET       (0xC0) // リセット
@@ -49,13 +50,24 @@
 typedef unsigned char  BYTE;
 typedef unsigned short WORD;
 
+// タイマー変数
+struct time_t
+{
+  WORD msec;
+  BYTE sec;
+  BYTE minute;
+  BYTE hour;
+};
+struct time_t now;
+
 // CANメッセージ構造体
-#define MSG_STR_MAX (23) // 11*2+1
+#define MSG_STR_MAX (36) // 00h00m00s000-000-0-0000000000000000 (35+1)
 struct canmsg_t
 {
   WORD id;
   BYTE dlc;
   BYTE data[8];
+  //struct time_t rtime;
   char str[MSG_STR_MAX];
   int str_idx;
 };
@@ -76,13 +88,13 @@ const char* to_ascii = "0123456789ABCDEF";
 // USB受信バッファ
 #define LINE_MAX (8)
 char line[LINE_MAX];
-int linepos = 0;
+BYTE linepos = 0;
 
 // MCP2515モード状態
 #define MODE_CONFIG (0)
 #define MODE_NORMAL (1)
 #define MODE_LISTEN (2)
-int mode = MODE_CONFIG;
+BYTE mode = MODE_CONFIG;
 
 BYTE spi_transmit(BYTE c);
 void mcp2515_reset();
@@ -132,6 +144,12 @@ void main(void)
 
   // USB初期化
   usb_init();
+
+  // タイマー初期化(10msに1回割り込みを発生させる)
+  TMR0 = -7500;
+  T0CON = 0x83; // 1 / 16 prescalse
+  INTCONbits.GIE    = 1; // 割り込み許可
+  INTCONbits.TMR0IE = 1; // タイマ0割り込み許可
 
   // メインループ開始
   //LATBbits.LATB5 = 1;
@@ -290,15 +308,32 @@ int mcp2515_recv(struct canmsg_t* msg)
   SPI_CS = 1;
 
   // 文字列化
-  msg->str[0] = to_ascii[(msg->id >> 8) & 0x0F];
-  msg->str[1] = to_ascii[(msg->id >> 4) & 0x0F];
-  msg->str[2] = to_ascii[(msg->id >> 0) & 0x0F];
-  msg->str[3] = to_ascii[msg->dlc];
+  struct time_t time = now;
+  msg->str[0]  = to_ascii[time.hour / 10];
+  msg->str[1]  = to_ascii[time.hour % 10];
+  msg->str[2]  = 'h';
+  msg->str[3]  = to_ascii[time.minute / 10];
+  msg->str[4]  = to_ascii[time.minute % 10];
+  msg->str[5]  = 'm';
+  msg->str[6]  = to_ascii[time.sec / 10];
+  msg->str[7]  = to_ascii[time.sec % 10];
+  msg->str[8]  = 's';
+  msg->str[9]  = to_ascii[time.msec / 100];
+  msg->str[10] = to_ascii[(time.msec % 100) / 10];
+  msg->str[11] = to_ascii[time.msec % 10];
+  msg->str[12] = '-';
+
+  msg->str[13] = to_ascii[(msg->id >> 8) & 0x0F];
+  msg->str[14] = to_ascii[(msg->id >> 4) & 0x0F];
+  msg->str[15] = to_ascii[(msg->id >> 0) & 0x0F];
+  msg->str[16] = '-';
+  msg->str[17] = to_ascii[msg->dlc];
+  msg->str[18] = '-';
   for (int i = 0; i < msg->dlc; i++) {
-    msg->str[4+(i*2)]   = to_ascii[(msg->data[i] >> 4) & 0x0F];
-    msg->str[4+(i*2)+1] = to_ascii[(msg->data[i] >> 0) & 0x0F];
+    msg->str[19+(i*2)]   = to_ascii[(msg->data[i] >> 4) & 0x0F];
+    msg->str[19+(i*2)+1] = to_ascii[(msg->data[i] >> 0) & 0x0F];
   }
-  msg->str[4+(msg->dlc*2)] = '\r';
+  msg->str[19+(msg->dlc*2)] = '\r';
   msg->str_idx = 0;
 
   return 1;
@@ -311,12 +346,14 @@ void parseline(char* line)
     mcp2515_modreg(CANCTRL, 0xE0, 0x00);
     mode = MODE_NORMAL;
     LATBbits.LATB5 = 1; // Main-LED点灯
+    memset(&now, 0, sizeof(now));
   }
   else if (line[0] == 'L' && mode == MODE_CONFIG) {
     // リスンオンリーモード
     mcp2515_modreg(CANCTRL, 0xE0, 0x60);
     mode = MODE_LISTEN;
     LATBbits.LATB5 = 1; // Main-LED点灯
+    memset(&now, 0, sizeof(now));
   }
   else if (line[0] == 'C') {
     // 受信停止(コンフィグモードに戻す)
@@ -348,4 +385,29 @@ void parseline(char* line)
     if (line[1] == '9') mcp2515_bitrate(BITRATE_200K);
   }
   usb_putch('\r');
+}
+
+void interrupt isr()
+{
+  if (INTCONbits.TMR0IF) {
+    // 10msec毎に割り込み発生
+    TMR0 = -7500;
+    INTCONbits.TMR0IF = 0;
+    now.msec += 10;
+    if (now.msec >= 1000) {
+      now.sec++;
+      now.msec = 0;
+    }
+    if (now.sec >= 60) {
+      now.minute++;
+      now.sec = 0;
+    }
+    if (now.minute >= 60) {
+      now.hour++;
+      now.minute = 0;
+    }
+    if (now.hour >= 24) {
+      now.hour = 0;
+    }
+  }
 }
