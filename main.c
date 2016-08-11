@@ -30,6 +30,19 @@
 #define RXB0CTRL (0x60) // BIT_MOD可能
 #define RXB1CTRL (0x70) // BIT_MOD可能
 
+// MCP2515ビットタイミング定義(CNF1,CNF2,CNF3) 24MHz用
+// 全定義SJW=4, SampleTime=1回
+#define BITRATE_10K  0xFB, 0xAD, 0x06 // BRP=60, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_20K  0xDD, 0xAD, 0x06 // BRP=30, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_50K  0xCB, 0xAD, 0x06 // BRP=12, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_100K 0xC5, 0xAD, 0x06 // BRP=6,  PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_125K 0xC5, 0xA4, 0x04 // BRP=6,  PRSEG=5, PS1=5, PS2=5, SamplePt=68.75%
+#define BITRATE_200K 0xC2, 0xAD, 0x06 // BRP=3,  PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_250K 0xC2, 0xA4, 0x04 // BRP=3,  PRSEG=5, PS1=5, PS2=5, SamplePt=68.75%
+#define BITRATE_500K 0xC1, 0x9A, 0x03 // BRP=2,  PRSEG=3, PS1=4, PS2=4, SamplePt=66.67%
+#define BITRATE_800K 0xC0, 0xA3, 0x04 // BRP=1,  PRSEG=4, PS1=5, PS2=5, SamplePt=66.67%
+#define BITRATE_1M   0xC0, 0x9A, 0x03 // BRP=1,  PRSEG=4, PS1=3, PS2=4, SamplePt=66.67%
+
 // システムクロック48MHz (__delay_msマクロ用)
 #define _XTAL_FREQ 48000000
 
@@ -74,6 +87,7 @@ int mode = MODE_CONFIG;
 BYTE spi_transmit(BYTE c);
 void mcp2515_reset();
 void mcp2515_init();
+void mcp2515_bitrate(BYTE cnf1, BYTE cnf2, BYTE cnf3);
 void mcp2515_writereg(BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE addr);
 void mcp2515_modreg(BYTE addr, BYTE mask, BYTE data);
@@ -214,13 +228,21 @@ void mcp2515_init()
   mcp2515_modreg(RXB1CTRL, 0x60, 0x60);
   // エラー及びRXB0,RXB1で受信割り込み設定
   mcp2515_writereg(CANINTE, 0x23);
-  // CANビットレート設定
+  // CANビットレート設定(default)
+  mcp2515_bitrate(BITRATE_500K);
   mcp2515_writereg(CNF1, 0xC1);
   mcp2515_writereg(CNF2, 0x9A);
   mcp2515_writereg(CNF3, 0x03);
   // RXB0割り込みピン(11番)を有効化(受信時にLEDを点滅させる)
   // RXB1割り込みピン(10番)をデジタル出力に設定
   mcp2515_modreg(BFPCTRL, 0x0F, 0x0D);
+}
+
+void mcp2515_bitrate(BYTE cnf1, BYTE cnf2, BYTE cnf3)
+{
+  mcp2515_writereg(CNF1, cnf1);
+  mcp2515_writereg(CNF2, cnf2);
+  mcp2515_writereg(CNF3, cnf3);
 }
 
 void mcp2515_writereg(BYTE addr, BYTE data)
@@ -311,6 +333,19 @@ void parseline(char* line)
     UCON = 0;
     _delay(1000);
     RESET();
- }
+  }
+  else if (line[0] == 'S') {
+    // ビットレート設定
+    if (line[1] == '0') mcp2515_bitrate(BITRATE_10K);
+    if (line[1] == '1') mcp2515_bitrate(BITRATE_20K);
+    if (line[1] == '2') mcp2515_bitrate(BITRATE_50K);
+    if (line[1] == '3') mcp2515_bitrate(BITRATE_100K);
+    if (line[1] == '4') mcp2515_bitrate(BITRATE_125K);
+    if (line[1] == '5') mcp2515_bitrate(BITRATE_250K);
+    if (line[1] == '6') mcp2515_bitrate(BITRATE_500K);
+    if (line[1] == '7') mcp2515_bitrate(BITRATE_800K);
+    if (line[1] == '8') mcp2515_bitrate(BITRATE_1M);
+    if (line[1] == '9') mcp2515_bitrate(BITRATE_200K);
+  }
   usb_putch('\r');
 }
