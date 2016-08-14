@@ -15,7 +15,10 @@
 #define SPI_RXSTAT_READ (0xB0) // RX状態読み込み
 
 // チップセレクト
-#define SPI_CS LATCbits.LATC6
+#define SPI_CS1 LATCbits.LATC6
+#define SPI_CS2 LATCbits.LATC4
+#define SPI_CS3 LATCbits.LATC3
+#define SPI_CS4 LATCbits.LATC5
 
 // MCP2515レジスタ
 #define BFPCTRL  (0x0C) // BIT_MOD可能
@@ -117,13 +120,19 @@ void main(void)
   clear = 0;
 
   // SPIピン設定
-  TRISCbits.TRISC6 = 0;   // 8番ピン(CS)を出力に設定
+  TRISCbits.TRISC6 = 0;   // 8番ピン(CS-ch1)を出力に設定
+  TRISCbits.TRISC4 = 0;   // 6番ピン(CS-ch2)を出力に設定
+  TRISCbits.TRISC3 = 0;   // 7番ピン(CS-ch3)を出力に設定
+  TRISCbits.TRISC5 = 0;   // 5番ピン(CS-ch4)を出力に設定
   TRISCbits.TRISC7 = 0;   // 9番ピン(SDO)を出力に設定
   TRISBbits.TRISB4 = 1;   // 13番ピン(SDI)を入力に設定
   TRISBbits.TRISB6 = 0;   // 11番ピン(SCK)を出力に設定
 
    // SPI_CS OFF
-  SPI_CS = 1;
+  SPI_CS1 = 1;
+  SPI_CS2 = 1;
+  SPI_CS3 = 1;
+  SPI_CS4 = 1;
 
   // MCP2515リセット
   mcp2515_reset();
@@ -221,9 +230,9 @@ void mcp2515_reset()
 {
   BYTE data = 0;
   while (++data);
-  SPI_CS = 0;
+  SPI_CS1 = 0;
   spi_transmit(SPI_RESET);
-  SPI_CS = 1;
+  SPI_CS1 = 1;
   while (++data);
 }
 
@@ -253,36 +262,36 @@ void mcp2515_bitrate(BYTE cnf1, BYTE cnf2, BYTE cnf3)
 
 void mcp2515_writereg(BYTE addr, BYTE data)
 {
-  SPI_CS = 0;
+  SPI_CS1 = 0;
   spi_transmit(SPI_REG_WRITE);
   spi_transmit(addr);
   spi_transmit(data);
-  SPI_CS = 1;
+  SPI_CS1 = 1;
 }
 
 BYTE mcp2515_readreg(BYTE addr)
 {
-  SPI_CS = 0;
+  SPI_CS1 = 0;
   spi_transmit(SPI_REG_READ);
   spi_transmit(addr);
   BYTE data = spi_transmit(0xFF);
-  SPI_CS = 1;
+  SPI_CS1 = 1;
   return data;
 }
 
 void mcp2515_modreg(BYTE addr, BYTE mask, BYTE data)
 {
-  SPI_CS = 0;
+  SPI_CS1 = 0;
   spi_transmit(SPI_BIT_MOD);
   spi_transmit(addr);
   spi_transmit(mask);
   spi_transmit(data);
-  SPI_CS = 1;
+  SPI_CS1 = 1;
 }
 
 int mcp2515_recv(struct canmsg_t* msg)
 {
-  SPI_CS = 0;
+  SPI_CS1 = 0;
   spi_transmit(SPI_RXB0_READ); // RXB0受信
 
   msg->id = (WORD)spi_transmit(0xFF) << 3;
@@ -293,7 +302,7 @@ int mcp2515_recv(struct canmsg_t* msg)
   for (int i = 0; i < msg->dlc && i < 8; i++)
     msg->data[i] = spi_transmit(0xFF);
 
-  SPI_CS = 1;
+  SPI_CS1 = 1;
 
   // 文字列化
   unsigned long t = time_msec;
