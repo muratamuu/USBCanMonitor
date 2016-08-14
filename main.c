@@ -113,8 +113,8 @@ void main(void)
   ANSELH = 0x00;
 
   // 12番ピン(LED)を出力に設定
-  //TRISBbits.TRISB5 = 0;
-  //LATBbits.LATB5 = 0;
+  TRISBbits.TRISB5 = 0;
+  LATBbits.LATB5 = 0;
 
   // SPI設定
   SSPSTATbits.CKE   = 1;  // クロックがアクティブからアイドルで送信する
