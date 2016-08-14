@@ -84,11 +84,15 @@ const char* to_ascii = "0123456789ABCDEF";
 char line[LINE_MAX];
 BYTE linepos = 0;
 
-// MCP2515モード状態
-#define MODE_CONFIG (0)
-#define MODE_NORMAL (1)
-#define MODE_LISTEN (2)
-BYTE mode = MODE_CONFIG;
+// アプリケーションモード
+#define MODE_MCP2515 (0x0F) // MCP2515モード
+#define MODE_CONFIG  (0x01) // MCP2515コンフィグモード
+#define MODE_NORMAL  (0x02) // MCP2515通常受信モード(ACK送信有)
+#define MODE_LISTEN  (0x04) // MCP2515リスンオンリモード
+#define MODE_DATA    (0xF0) // 受信データ送信モード
+#define MODE_ASCII   (0x10) // 受信データを文字列化送信
+#define MODE_BINARY  (0x20) // 受信データをバイナリ送信
+BYTE mode = MODE_CONFIG | MODE_ASCII;
 
 void spi_enable(BYTE ch);
 void spi_disable(BYTE ch);
@@ -132,7 +136,7 @@ void main(void)
   TRISBbits.TRISB4 = 1;   // 13番ピン(SDI)を入力に設定
   TRISBbits.TRISB6 = 0;   // 11番ピン(SCK)を出力に設定
 
-   // SPI_CS OFF
+  // SPI_CS OFF
   SPI_CS0 = 1;
   SPI_CS1 = 1;
   SPI_CS2 = 1;
@@ -406,25 +410,31 @@ BYTE is_received(BYTE ch)
 
 void parseline(char* line)
 {
-  if (line[0] == 'O' && mode == MODE_CONFIG) {
+  if (line[0] == 'O' && mode & MODE_CONFIG) {
     // 通常受信モード(ACKを返す)
     mcp2515_modreg(0, CANCTRL, 0xE0, 0x00);
     mcp2515_modreg(1, CANCTRL, 0xE0, 0x00);
     mcp2515_modreg(2, CANCTRL, 0xE0, 0x00);
     mcp2515_modreg(3, CANCTRL, 0xE0, 0x00);
-    mode = MODE_NORMAL;
+    mode = (mode & MODE_DATA) | MODE_NORMAL;
     LATBbits.LATB5 = 1; // Main-LED点灯
     time_msec = 0;
   }
-  else if (line[0] == 'L' && mode == MODE_CONFIG) {
+  else if (line[0] == 'L' && mode & MODE_CONFIG) {
     // リスンオンリーモード
     mcp2515_modreg(0, CANCTRL, 0xE0, 0x60);
     mcp2515_modreg(1, CANCTRL, 0xE0, 0x60);
     mcp2515_modreg(2, CANCTRL, 0xE0, 0x60);
     mcp2515_modreg(3, CANCTRL, 0xE0, 0x60);
-    mode = MODE_LISTEN;
+    mode = (mode & MODE_DATA) | MODE_LISTEN;
     LATBbits.LATB5 = 1; // Main-LED点灯
     time_msec = 0;
+  }
+  else if (line[0] == 'A' && mode & MODE_CONFIG) {
+    mode = (mode & MODE_MCP2515) | MODE_ASCII;
+  }
+  else if (line[0] == 'B' && mode & MODE_CONFIG) {
+    mode = (mode & MODE_MCP2515) | MODE_BINARY;
   }
   else if (line[0] == 'C') {
     // 受信停止(コンフィグモードに戻す)
@@ -432,7 +442,7 @@ void parseline(char* line)
     mcp2515_modreg(1, CANCTRL, 0xE0, 0x80);
     mcp2515_modreg(2, CANCTRL, 0xE0, 0x80);
     mcp2515_modreg(3, CANCTRL, 0xE0, 0x80);
-    mode = MODE_CONFIG;
+    mode = (mode & MODE_DATA) | MODE_CONFIG;
     recv_count = 0;
     recv_idx = 0;
     send_idx = 0;
