@@ -15,10 +15,10 @@
 #define SPI_RXSTAT_READ (0xB0) // RX状態読み込み
 
 // チップセレクト
-#define SPI_CS1 LATCbits.LATC6
-#define SPI_CS2 LATCbits.LATC4
-#define SPI_CS3 LATCbits.LATC3
-#define SPI_CS4 LATCbits.LATC5
+#define SPI_CS0 LATCbits.LATC6
+#define SPI_CS1 LATCbits.LATC4
+#define SPI_CS2 LATCbits.LATC3
+#define SPI_CS3 LATCbits.LATC5
 
 // MCP2515レジスタ
 #define BFPCTRL  (0x0C) // BIT_MOD可能
@@ -56,7 +56,7 @@ typedef unsigned short WORD;
 unsigned long time_msec;
 
 // CANメッセージ構造体
-#define MSG_STR_MAX (36) // 00h00m00s000-000-0-0000000000000000 (35+1)
+#define MSG_STR_MAX (38) // 00h00m00s000-0-000-0-0000000000000000 (37+1)
 struct canmsg_t
 {
   WORD id;
@@ -67,7 +67,7 @@ struct canmsg_t
 };
 
 // CANメッセージバッファ
-#define MSG_MAX (8)
+#define MSG_MAX (6)
 struct canmsg_t msgbuffer[MSG_MAX];
 
 // 処理進行状態変数
@@ -90,14 +90,18 @@ BYTE linepos = 0;
 #define MODE_LISTEN (2)
 BYTE mode = MODE_CONFIG;
 
+void spi_enable(BYTE ch);
+void spi_disable(BYTE ch);
 BYTE spi_transmit(BYTE c);
-void mcp2515_reset();
-void mcp2515_init();
-void mcp2515_bitrate(BYTE cnf1, BYTE cnf2, BYTE cnf3);
-void mcp2515_writereg(BYTE addr, BYTE data);
-BYTE mcp2515_readreg(BYTE addr);
-void mcp2515_modreg(BYTE addr, BYTE mask, BYTE data);
-int mcp2515_recv(struct canmsg_t* msg);
+void mcp2515_reset(BYTE ch);
+void mcp2515_init(BYTE ch);
+void mcp2515_bitrate(BYTE ch, BYTE cnf1, BYTE cnf2, BYTE cnf3);
+void mcp2515_bitrate_allch(BYTE cnf1, BYTE cnf2, BYTE cnf3);
+void mcp2515_writereg(BYTE ch, BYTE addr, BYTE data);
+BYTE mcp2515_readreg(BYTE ch, BYTE addr);
+void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data);
+int mcp2515_recv(BYTE ch, struct canmsg_t* msg);
+BYTE is_received(BYTE ch);
 void parseline(char* line);
 
 void main(void)
@@ -107,8 +111,8 @@ void main(void)
   ANSELH = 0x00;
 
   // 12番ピン(LED)を出力に設定
-  TRISBbits.TRISB5 = 0;
-  LATBbits.LATB5 = 0;
+  //TRISBbits.TRISB5 = 0;
+  //LATBbits.LATB5 = 0;
 
   // SPI設定
   SSPSTATbits.CKE   = 1;  // クロックがアクティブからアイドルで送信する
@@ -120,25 +124,31 @@ void main(void)
   clear = 0;
 
   // SPIピン設定
-  TRISCbits.TRISC6 = 0;   // 8番ピン(CS-ch1)を出力に設定
-  TRISCbits.TRISC4 = 0;   // 6番ピン(CS-ch2)を出力に設定
-  TRISCbits.TRISC3 = 0;   // 7番ピン(CS-ch3)を出力に設定
-  TRISCbits.TRISC5 = 0;   // 5番ピン(CS-ch4)を出力に設定
+  TRISCbits.TRISC6 = 0;   // 8番ピン(CS-ch0)を出力に設定
+  TRISCbits.TRISC4 = 0;   // 6番ピン(CS-ch1)を出力に設定
+  TRISCbits.TRISC3 = 0;   // 7番ピン(CS-ch2)を出力に設定
+  TRISCbits.TRISC5 = 0;   // 5番ピン(CS-ch3)を出力に設定
   TRISCbits.TRISC7 = 0;   // 9番ピン(SDO)を出力に設定
   TRISBbits.TRISB4 = 1;   // 13番ピン(SDI)を入力に設定
   TRISBbits.TRISB6 = 0;   // 11番ピン(SCK)を出力に設定
 
    // SPI_CS OFF
+  SPI_CS0 = 1;
   SPI_CS1 = 1;
   SPI_CS2 = 1;
   SPI_CS3 = 1;
-  SPI_CS4 = 1;
 
   // MCP2515リセット
-  mcp2515_reset();
+  mcp2515_reset(0);
+  mcp2515_reset(1);
+  mcp2515_reset(2);
+  mcp2515_reset(3);
 
   // MCP2515初期化
-  mcp2515_init();
+  mcp2515_init(0);
+  mcp2515_init(1);
+  mcp2515_init(2);
+  mcp2515_init(3);
 
   OSCCON = 0x30;
 
@@ -147,37 +157,42 @@ void main(void)
 
   // タイマー初期化(10msに1回割り込みを発生させる)
   TMR0 = -7500;
-  T0CON = 0x83; // 1 / 16 prescalse
+  T0CON = 0x83;          // 1 / 16 prescalse
   INTCONbits.GIE    = 1; // 割り込み許可
   INTCONbits.TMR0IE = 1; // タイマ0割り込み許可
 
   // メインループ開始
   //LATBbits.LATB5 = 1;
 
+  // 受信チャネル番号(0〜3)
+  BYTE ch = 0;
+
   while (1) {
     usb_process();
 
-    // 受信処理
-    if (!PORTCbits.RC2) { // 14番ピンGND (MCP2515エラーor受信割り込み)
+    // 受信処理 (1Loopで1chずつスライドしてチェックする)
+    ch = (ch + 1) % 4;
+
+    if (is_received(ch)) { // 受信/エラーチェック
       // 割り込み要因チェック
-      BYTE reason = mcp2515_readreg(CANINTF);
+      BYTE reason = mcp2515_readreg(ch, CANINTF);
 
       if (reason & 0x20) { // エラー割り込み
-        mcp2515_modreg(CANINTF, 0x20, 0x00); // エラーフラグを落とす
-        if (mcp2515_readreg(EFLG) & 0xC0)
+        mcp2515_modreg(ch, CANINTF, 0x20, 0x00); // エラーフラグを落とす
+        if (mcp2515_readreg(ch, EFLG) & 0xC0)
           // MCP2515受信バッファオーバー
-          mcp2515_modreg(BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
+          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
       }
 
       if (reason & 0x03) { // 受信割り込み
         if (recv_count < MSG_MAX) {
-          if (mcp2515_recv(&msgbuffer[recv_idx]) > 0) {
+          if (mcp2515_recv(ch, &msgbuffer[recv_idx]) > 0) {
             recv_count++;
             recv_idx = (recv_idx + 1) % MSG_MAX;
           }
         } else {
           // PIC内受信バッファオーバー
-          mcp2515_modreg(BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
+          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
         }
       }
 
@@ -219,6 +234,30 @@ void main(void)
   return;
 }
 
+void spi_enable(BYTE ch)
+{
+  if (ch == 0)
+    SPI_CS0 = 0;
+  else if (ch == 1)
+    SPI_CS1 = 0;
+  else if (ch == 2)
+    SPI_CS2 = 0;
+  else if (ch == 3)
+    SPI_CS3 = 0;
+}
+
+void spi_disable(BYTE ch)
+{
+  if (ch == 0)
+    SPI_CS0 = 1;
+  else if (ch == 1)
+    SPI_CS1 = 1;
+  else if (ch == 2)
+    SPI_CS2 = 1;
+  else if (ch == 3)
+    SPI_CS3 = 1;
+}
+
 BYTE spi_transmit(BYTE c)
 {
   SSPBUF = c;
@@ -226,72 +265,78 @@ BYTE spi_transmit(BYTE c)
   return SSPBUF;
 }
 
-void mcp2515_reset()
+void mcp2515_reset(BYTE ch)
 {
   BYTE data = 0;
   while (++data);
-  SPI_CS1 = 0;
+  spi_enable(ch);
   spi_transmit(SPI_RESET);
-  SPI_CS1 = 1;
+  spi_disable(ch);
   while (++data);
 }
 
-void mcp2515_init()
+void mcp2515_init(BYTE ch)
 {
   // コンフィグモードに移行
   // クロック出力 Fosc/2 24MHz/2=12MHz
-  mcp2515_writereg(CANCTRL, 0x85);
+  mcp2515_writereg(ch, CANCTRL, 0x85);
   // RXB0,RXB1でフィルタマスクを使用しない
-  mcp2515_modreg(RXB0CTRL, 0x60, 0x60);
-  mcp2515_modreg(RXB1CTRL, 0x60, 0x60);
+  mcp2515_modreg(ch, RXB0CTRL, 0x60, 0x60);
+  mcp2515_modreg(ch, RXB1CTRL, 0x60, 0x60);
   // エラー及びRXB0,RXB1で受信割り込み設定
-  mcp2515_writereg(CANINTE, 0x23);
+  mcp2515_writereg(ch, CANINTE, 0x23);
   // CANビットレート設定(default)
-  mcp2515_bitrate(BITRATE_500K);
+  mcp2515_bitrate(ch, BITRATE_500K);
   // RXB0割り込みピン(11番)を有効化(受信時にLEDを点滅させる)
   // RXB1割り込みピン(10番)をデジタル出力に設定
-  mcp2515_modreg(BFPCTRL, 0x0F, 0x0D);
+  mcp2515_modreg(ch, BFPCTRL, 0x0F, 0x0D);
 }
 
-void mcp2515_bitrate(BYTE cnf1, BYTE cnf2, BYTE cnf3)
+void mcp2515_bitrate(BYTE ch, BYTE cnf1, BYTE cnf2, BYTE cnf3)
 {
-  mcp2515_writereg(CNF1, cnf1);
-  mcp2515_writereg(CNF2, cnf2);
-  mcp2515_writereg(CNF3, cnf3);
+  mcp2515_writereg(ch, CNF1, cnf1);
+  mcp2515_writereg(ch, CNF2, cnf2);
+  mcp2515_writereg(ch, CNF3, cnf3);
 }
 
-void mcp2515_writereg(BYTE addr, BYTE data)
+void mcp2515_bitrate_allch(BYTE cnf1, BYTE cnf2, BYTE cnf3)
 {
-  SPI_CS1 = 0;
+  for (BYTE ch = 0; ch < 4; ch++)
+    mcp2515_bitrate(ch, cnf1, cnf2, cnf3);
+}
+
+void mcp2515_writereg(BYTE ch, BYTE addr, BYTE data)
+{
+  spi_enable(ch);
   spi_transmit(SPI_REG_WRITE);
   spi_transmit(addr);
   spi_transmit(data);
-  SPI_CS1 = 1;
+  spi_disable(ch);
 }
 
-BYTE mcp2515_readreg(BYTE addr)
+BYTE mcp2515_readreg(BYTE ch, BYTE addr)
 {
-  SPI_CS1 = 0;
+  spi_enable(ch);
   spi_transmit(SPI_REG_READ);
   spi_transmit(addr);
   BYTE data = spi_transmit(0xFF);
-  SPI_CS1 = 1;
+  spi_disable(ch);
   return data;
 }
 
-void mcp2515_modreg(BYTE addr, BYTE mask, BYTE data)
+void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data)
 {
-  SPI_CS1 = 0;
+  spi_enable(ch);
   spi_transmit(SPI_BIT_MOD);
   spi_transmit(addr);
   spi_transmit(mask);
   spi_transmit(data);
-  SPI_CS1 = 1;
+  spi_disable(ch);
 }
 
-int mcp2515_recv(struct canmsg_t* msg)
+int mcp2515_recv(BYTE ch, struct canmsg_t* msg)
 {
-  SPI_CS1 = 0;
+  spi_enable(ch);
   spi_transmit(SPI_RXB0_READ); // RXB0受信
 
   msg->id = (WORD)spi_transmit(0xFF) << 3;
@@ -302,7 +347,7 @@ int mcp2515_recv(struct canmsg_t* msg)
   for (int i = 0; i < msg->dlc && i < 8; i++)
     msg->data[i] = spi_transmit(0xFF);
 
-  SPI_CS1 = 1;
+  spi_disable(ch);
 
   // 文字列化
   unsigned long t = time_msec;
@@ -325,41 +370,68 @@ int mcp2515_recv(struct canmsg_t* msg)
   msg->str[11] = to_ascii[msec % 10];
   msg->str[12] = '-';
 
-  msg->str[13] = to_ascii[(msg->id >> 8) & 0x0F];
-  msg->str[14] = to_ascii[(msg->id >> 4) & 0x0F];
-  msg->str[15] = to_ascii[(msg->id >> 0) & 0x0F];
-  msg->str[16] = '-';
-  msg->str[17] = to_ascii[msg->dlc];
+  msg->str[13] = to_ascii[ch+1]; // 0-3 -> 1-4
+  msg->str[14] = '-';
+
+  msg->str[15] = to_ascii[(msg->id >> 8) & 0x0F];
+  msg->str[16] = to_ascii[(msg->id >> 4) & 0x0F];
+  msg->str[17] = to_ascii[(msg->id >> 0) & 0x0F];
   msg->str[18] = '-';
+  msg->str[19] = to_ascii[msg->dlc];
+  msg->str[20] = '-';
   for (int i = 0; i < msg->dlc; i++) {
-    msg->str[19+(i*2)]   = to_ascii[(msg->data[i] >> 4) & 0x0F];
-    msg->str[19+(i*2)+1] = to_ascii[(msg->data[i] >> 0) & 0x0F];
+    msg->str[21+(i*2)]   = to_ascii[(msg->data[i] >> 4) & 0x0F];
+    msg->str[21+(i*2)+1] = to_ascii[(msg->data[i] >> 0) & 0x0F];
   }
-  msg->str[19+(msg->dlc*2)] = '\r';
+  msg->str[21+(msg->dlc*2)] = '\r';
   msg->str_idx = 0;
 
   return 1;
+}
+
+BYTE is_received(BYTE ch)
+{
+  // 受信割り込みピンを確認 GNDならMCP2515エラーor受信割り込み
+  if (ch == 0)
+    return !PORTCbits.RC2; // 14番ピン
+  else if (ch == 1)
+    return !PORTCbits.RC0; // 16番ピン
+  else if (ch == 2)
+    return !PORTCbits.RC1; // 15番ピン
+  else if (ch == 3)
+    return !PORTAbits.RA4; // 3番ピン
+  else
+    return 0;
 }
 
 void parseline(char* line)
 {
   if (line[0] == 'O' && mode == MODE_CONFIG) {
     // 通常受信モード(ACKを返す)
-    mcp2515_modreg(CANCTRL, 0xE0, 0x00);
+    mcp2515_modreg(0, CANCTRL, 0xE0, 0x00);
+    mcp2515_modreg(1, CANCTRL, 0xE0, 0x00);
+    mcp2515_modreg(2, CANCTRL, 0xE0, 0x00);
+    mcp2515_modreg(3, CANCTRL, 0xE0, 0x00);
     mode = MODE_NORMAL;
     LATBbits.LATB5 = 1; // Main-LED点灯
     time_msec = 0;
   }
   else if (line[0] == 'L' && mode == MODE_CONFIG) {
     // リスンオンリーモード
-    mcp2515_modreg(CANCTRL, 0xE0, 0x60);
+    mcp2515_modreg(0, CANCTRL, 0xE0, 0x60);
+    mcp2515_modreg(1, CANCTRL, 0xE0, 0x60);
+    mcp2515_modreg(2, CANCTRL, 0xE0, 0x60);
+    mcp2515_modreg(3, CANCTRL, 0xE0, 0x60);
     mode = MODE_LISTEN;
     LATBbits.LATB5 = 1; // Main-LED点灯
     time_msec = 0;
   }
   else if (line[0] == 'C') {
     // 受信停止(コンフィグモードに戻す)
-    mcp2515_modreg(CANCTRL, 0xE0, 0x80);
+    mcp2515_modreg(0, CANCTRL, 0xE0, 0x80);
+    mcp2515_modreg(1, CANCTRL, 0xE0, 0x80);
+    mcp2515_modreg(2, CANCTRL, 0xE0, 0x80);
+    mcp2515_modreg(3, CANCTRL, 0xE0, 0x80);
     mode = MODE_CONFIG;
     recv_count = 0;
     recv_idx = 0;
@@ -375,16 +447,16 @@ void parseline(char* line)
   }
   else if (line[0] == 'S') {
     // ビットレート設定
-    if (line[1] == '0') mcp2515_bitrate(BITRATE_10K);
-    if (line[1] == '1') mcp2515_bitrate(BITRATE_20K);
-    if (line[1] == '2') mcp2515_bitrate(BITRATE_50K);
-    if (line[1] == '3') mcp2515_bitrate(BITRATE_100K);
-    if (line[1] == '4') mcp2515_bitrate(BITRATE_125K);
-    if (line[1] == '5') mcp2515_bitrate(BITRATE_250K);
-    if (line[1] == '6') mcp2515_bitrate(BITRATE_500K);
-    if (line[1] == '7') mcp2515_bitrate(BITRATE_800K);
-    if (line[1] == '8') mcp2515_bitrate(BITRATE_1M);
-    if (line[1] == '9') mcp2515_bitrate(BITRATE_200K);
+    if (line[1] == '0') mcp2515_bitrate_allch(BITRATE_10K);
+    if (line[1] == '1') mcp2515_bitrate_allch(BITRATE_20K);
+    if (line[1] == '2') mcp2515_bitrate_allch(BITRATE_50K);
+    if (line[1] == '3') mcp2515_bitrate_allch(BITRATE_100K);
+    if (line[1] == '4') mcp2515_bitrate_allch(BITRATE_125K);
+    if (line[1] == '5') mcp2515_bitrate_allch(BITRATE_250K);
+    if (line[1] == '6') mcp2515_bitrate_allch(BITRATE_500K);
+    if (line[1] == '7') mcp2515_bitrate_allch(BITRATE_800K);
+    if (line[1] == '8') mcp2515_bitrate_allch(BITRATE_1M);
+    if (line[1] == '9') mcp2515_bitrate_allch(BITRATE_200K);
   }
   usb_putch('\r');
 }
