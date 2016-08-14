@@ -59,25 +59,23 @@ unsigned long time_msec;
 #define MSG_STR_MAX (38) // 00h00m00s000-0-000-0-0000000000000000 (37+1)
 struct canmsg_t
 {
-  WORD id;
-  BYTE dlc;
-  BYTE data[8];
   char str[MSG_STR_MAX];
   BYTE str_idx;
+  BYTE str_sz;
 };
 
 // CANメッセージバッファ
-#define MSG_MAX (6)
+#define MSG_MAX (8)
 struct canmsg_t msgbuffer[MSG_MAX];
+
+// 文字列変換テーブル
+const char* to_ascii = "0123456789ABCDEF";
 
 // 処理進行状態変数
 BYTE recv_count = 0;
 BYTE recv_idx = 0;
 BYTE send_idx = 0;
 BYTE is_sending = 0;
-
-// 文字列変換テーブル
-const char* to_ascii = "0123456789ABCDEF";
 
 // USB受信バッファ
 #define LINE_MAX (4)
@@ -206,7 +204,8 @@ void main(void)
     while (usb_ep1_ready() && recv_count > 0) {
       is_sending = 1;
       struct canmsg_t* msg = &msgbuffer[send_idx];
-      if (usb_putch(msg->str[msg->str_idx++]) == '\r') {
+      usb_putch(msg->str[msg->str_idx++]);
+      if (msg->str_idx == msg->str_sz) {
         send_idx = (send_idx + 1) % MSG_MAX;
         recv_count--;
         is_sending = 0;
@@ -340,55 +339,77 @@ void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data)
 
 int mcp2515_recv(BYTE ch, struct canmsg_t* msg)
 {
+  WORD id;
+  BYTE dlc;
+  BYTE data[8];
+  unsigned long t = time_msec;
+
   spi_enable(ch);
   spi_transmit(SPI_RXB0_READ); // RXB0受信
 
-  msg->id = (WORD)spi_transmit(0xFF) << 3;
-  msg->id |= (WORD)spi_transmit(0xFF) >> 5;
+  id = (WORD)spi_transmit(0xFF) << 3;
+  id |= (WORD)spi_transmit(0xFF) >> 5;
   spi_transmit(0xFF);
   spi_transmit(0xFF);
-  msg->dlc = spi_transmit(0xFF) & 0x0F;
-  for (int i = 0; i < msg->dlc && i < 8; i++)
-    msg->data[i] = spi_transmit(0xFF);
+  dlc = spi_transmit(0xFF) & 0x0F;
+  for (int i = 0; i < 8; i++)
+    data[i] = (i < dlc) ? spi_transmit(0xFF) : 0;
 
   spi_disable(ch);
 
-  // 文字列化
-  unsigned long t = time_msec;
-  WORD msec = t % 1000;
-  BYTE sec  = (t / 1000) % 60;
-  BYTE min  = (t / 60000) % 60;
-  BYTE hour = (t / 3600000) % 24;
+  if (mode & MODE_ASCII) {
+    // 文字列で送信
+    WORD msec = t % 1000;
+    BYTE sec  = (t / 1000) % 60;
+    BYTE min  = (t / 60000) % 60;
+    BYTE hour = (t / 3600000) % 24;
 
-  msg->str[0]  = to_ascii[hour / 10];
-  msg->str[1]  = to_ascii[hour % 10];
-  msg->str[2]  = 'h';
-  msg->str[3]  = to_ascii[min / 10];
-  msg->str[4]  = to_ascii[min % 10];
-  msg->str[5]  = 'm';
-  msg->str[6]  = to_ascii[sec / 10];
-  msg->str[7]  = to_ascii[sec % 10];
-  msg->str[8]  = 's';
-  msg->str[9]  = to_ascii[msec / 100];
-  msg->str[10] = to_ascii[(msec % 100) / 10];
-  msg->str[11] = to_ascii[msec % 10];
-  msg->str[12] = '-';
+    msg->str[0]  = to_ascii[hour / 10];
+    msg->str[1]  = to_ascii[hour % 10];
+    msg->str[2]  = 'h';
+    msg->str[3]  = to_ascii[min / 10];
+    msg->str[4]  = to_ascii[min % 10];
+    msg->str[5]  = 'm';
+    msg->str[6]  = to_ascii[sec / 10];
+    msg->str[7]  = to_ascii[sec % 10];
+    msg->str[8]  = 's';
+    msg->str[9]  = to_ascii[msec / 100];
+    msg->str[10] = to_ascii[(msec % 100) / 10];
+    msg->str[11] = to_ascii[msec % 10];
+    msg->str[12] = '-';
 
-  msg->str[13] = to_ascii[ch+1]; // 0-3 -> 1-4
-  msg->str[14] = '-';
+    msg->str[13] = to_ascii[ch+1]; // 0-3 -> 1-4
+    msg->str[14] = '-';
 
-  msg->str[15] = to_ascii[(msg->id >> 8) & 0x0F];
-  msg->str[16] = to_ascii[(msg->id >> 4) & 0x0F];
-  msg->str[17] = to_ascii[(msg->id >> 0) & 0x0F];
-  msg->str[18] = '-';
-  msg->str[19] = to_ascii[msg->dlc];
-  msg->str[20] = '-';
-  for (int i = 0; i < msg->dlc; i++) {
-    msg->str[21+(i*2)]   = to_ascii[(msg->data[i] >> 4) & 0x0F];
-    msg->str[21+(i*2)+1] = to_ascii[(msg->data[i] >> 0) & 0x0F];
+    msg->str[15] = to_ascii[(id >> 8) & 0x0F];
+    msg->str[16] = to_ascii[(id >> 4) & 0x0F];
+    msg->str[17] = to_ascii[(id >> 0) & 0x0F];
+    msg->str[18] = '-';
+    msg->str[19] = to_ascii[dlc];
+    msg->str[20] = '-';
+    for (int i = 0; i < dlc; i++) {
+      msg->str[21+(i*2)]   = to_ascii[(data[i] >> 4) & 0x0F];
+      msg->str[21+(i*2)+1] = to_ascii[(data[i] >> 0) & 0x0F];
+    }
+    msg->str[21+(dlc*2)] = '\r';
+    msg->str_idx = 0;
+    msg->str_sz = 21 + (dlc * 2) + 1;
   }
-  msg->str[21+(msg->dlc*2)] = '\r';
-  msg->str_idx = 0;
+  else {
+    // バイナリで送信 (時刻:4Byte + チャネル:1Byte + id:2Byte + dlc:1Byte + data:8Byte)
+    msg->str[0] = (t >> 24) & 0xFF;
+    msg->str[1] = (t >> 16) & 0xFF;
+    msg->str[2] = (t >> 8)  & 0xFF;
+    msg->str[3] = t & 0xFF;
+    msg->str[4] = ch+1; // 0-3 -> 1-4
+    msg->str[5] = (id >> 8) & 0xFF;
+    msg->str[6] = id & 0xFF;
+    msg->str[7] = dlc;
+    for (int i = 0; i < 8; i++)
+      msg->str[8+i] = data[i];
+    msg->str_idx = 0;
+    msg->str_sz = 16; // 固定長
+  }
 
   return 1;
 }
