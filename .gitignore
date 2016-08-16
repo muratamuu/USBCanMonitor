@@ -4,6 +4,19 @@
 *.obj
 *.elf
 
+# xc8
+*.as
+*.cmf
+*.cof
+*.d
+*.hxl
+*.p1
+*.pre
+*.sdb
+*.sym
+*.lst
+*.rlf
+
 # Precompiled Headers
 *.gch
 *.pch
