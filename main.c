@@ -116,6 +116,12 @@ void main(void)
   TRISBbits.TRISB5 = 0;
   LATBbits.LATB5 = 0;
 
+  // 受信割り込みピンを入力に設定
+  TRISCbits.TRISC2 = 1;   // 14番ピン(INT-ch0)を入力に設定
+  TRISCbits.TRISC0 = 1;   // 16番ピン(INT-ch1)を入力に設定
+  TRISCbits.TRISC1 = 1;   // 15番ピン(INT-ch2)を入力に設定
+  TRISAbits.TRISA4 = 1;   //  3番ピン(INT-ch3)を入力に設定
+
   // SPI設定
   SSPSTATbits.CKE   = 1;  // クロックがアクティブからアイドルで送信する
   SSPCON1bits.SSPM  = 1;  // SPIクロック 1:FOSC/16 48MHz/16=3MHz
@@ -419,12 +425,14 @@ BYTE is_received(BYTE ch)
   // 受信割り込みピンを確認 GNDならMCP2515エラーor受信割り込み
   if (ch == 0)
     return !PORTCbits.RC2; // 14番ピン
+#if 0 // 4ch対応時に有効化する
   else if (ch == 1)
     return !PORTCbits.RC0; // 16番ピン
   else if (ch == 2)
     return !PORTCbits.RC1; // 15番ピン
   else if (ch == 3)
     return !PORTAbits.RA4; // 3番ピン
+#endif
   else
     return 0;
 }
