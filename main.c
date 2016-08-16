@@ -3,6 +3,7 @@
 
 #include <xc.h>
 #include "usb_cdc.h"
+#include <string.h>
 
 // SPIコマンド
 #define SPI_RESET       (0xC0) // リセット
@@ -57,6 +58,7 @@ unsigned long time_msec;
 
 // CANメッセージ構造体
 #define MSG_STR_MAX (38) // 00h00m00s000-0-000-0-0000000000000000 (37+1)
+                         // 00h00m00s000-N-0000.0000-E-00000.0000 (37+1)
 struct canmsg_t
 {
   char str[MSG_STR_MAX];
@@ -65,7 +67,7 @@ struct canmsg_t
 };
 
 // CANメッセージバッファ
-#define MSG_MAX (8)
+#define MSG_MAX (6)
 struct canmsg_t msgbuffer[MSG_MAX];
 
 // 文字列変換テーブル
@@ -77,9 +79,14 @@ BYTE recv_idx = 0;
 BYTE send_idx = 0;
 BYTE is_sending = 0;
 
+// GPS受信バッファ
+#define GPS_LINE_MAX (64)
+BYTE gpsline[GPS_LINE_MAX];
+BYTE gpslinepos = 0;
+
 // USB受信バッファ
 #define LINE_MAX (4)
-char line[LINE_MAX];
+BYTE line[LINE_MAX];
 BYTE linepos = 0;
 
 // アプリケーションモード
@@ -102,19 +109,17 @@ void mcp2515_bitrate_allch(BYTE cnf1, BYTE cnf2, BYTE cnf3);
 void mcp2515_writereg(BYTE ch, BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE ch, BYTE addr);
 void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data);
-int mcp2515_recv(BYTE ch, struct canmsg_t* msg);
+BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg);
 BYTE is_received(BYTE ch);
-void parseline(char* line);
+BYTE gps_recv();
+BYTE gps_parse(struct canmsg_t* msg);
+void parse_line(char* line);
 
 void main(void)
 {
   // アナログピンをデジタルに設定
   ANSEL  = 0x00;
   ANSELH = 0x00;
-
-  // 12番ピン(LED)を出力に設定
-  TRISBbits.TRISB5 = 0;
-  LATBbits.LATB5 = 0;
 
   // 受信割り込みピンを入力に設定
   TRISCbits.TRISC2 = 1;   // 14番ピン(INT-ch0)を入力に設定
@@ -169,8 +174,17 @@ void main(void)
   INTCONbits.GIE    = 1; // 割り込み許可
   INTCONbits.TMR0IE = 1; // タイマ0割り込み許可
 
-  // メインループ開始
-  //LATBbits.LATB5 = 1;
+  // UART(GPSシリアル受信)設定
+  TRISBbits.TRISB5 = 1;  // 12番ピン(RX/DT)を入力に設定する
+  RCSTA   = 0x90; // シリアル有効,連続受信,8bit,パリティなし
+  TXSTA   = 0x04; // BRGH:1
+  BAUDCON = 0x08; // BRG16:1
+  SPBRGH  = 1249 / 256; // 9600bps(1249:上位)
+  SPBRG   = 1249 % 256; // 9600bps(1249:下位)
+
+  ////////////////////////
+  /// メインループ開始 ///
+  ////////////////////////
 
   // 受信チャネル番号(0〜3)
   BYTE ch = 0;
@@ -203,8 +217,23 @@ void main(void)
           mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
         }
       }
-
-    } // 受信処理END
+    }
+    else if (PIR1bits.RCIF) { // GPSシリアル受信チェック
+      if (gps_recv()) { // 解析対象受信データあり
+        if (recv_count < MSG_MAX) {
+          if (gps_parse(&msgbuffer[recv_idx]) > 0) {
+            recv_count++;
+            recv_idx = (recv_idx + 1) % MSG_MAX;
+          }
+        } else {
+          // PIC内受信バッファオーバー(全部点灯)
+          mcp2515_modreg(0, BFPCTRL, 0x20, 0x20);
+          mcp2515_modreg(1, BFPCTRL, 0x20, 0x20);
+          mcp2515_modreg(2, BFPCTRL, 0x20, 0x20);
+          mcp2515_modreg(3, BFPCTRL, 0x20, 0x20);
+        }
+      }
+    }
 
     // USB送信処理
     while (usb_ep1_ready() && recv_count > 0) {
@@ -223,7 +252,7 @@ void main(void)
       BYTE c = usb_getch();
       if (c == '\r') {
         line[linepos] = 0;
-        parseline(line);
+        parse_line(line);
         linepos = 0;
       } else if (c != '\n') {
         line[linepos] = c;
@@ -343,7 +372,7 @@ void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data)
   spi_disable(ch);
 }
 
-int mcp2515_recv(BYTE ch, struct canmsg_t* msg)
+BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg)
 {
   WORD id;
   BYTE dlc;
@@ -437,7 +466,80 @@ BYTE is_received(BYTE ch)
     return 0;
 }
 
-void parseline(char* line)
+BYTE gps_recv()
+{
+  // シリアル受信データ読み込み
+  BYTE c = RCREG;
+  if (c == '$') // データ開始位置
+    gpslinepos = 0;
+
+  // バッファに追加
+  gpsline[gpslinepos] = c;
+
+  // データ終端チェック
+  if (c == '\n' || gpslinepos == GPS_LINE_MAX-1) {
+    gpsline[gpslinepos] = 0; // null止め
+    gpslinepos = 0;
+    // データチェック($GPGGAで始まること)
+    if (!strncmp(gpsline, "$GPGGA", 6))
+      return 1; // データあり
+  }
+  gpslinepos++;
+  return 0; // データなし
+}
+
+BYTE gps_parse(struct canmsg_t* msg)
+{
+  unsigned long t = time_msec;
+
+  if (mode & MODE_ASCII) {
+    // 文字列で送信
+    WORD msec = t % 1000;
+    BYTE sec  = (t / 1000) % 60;
+    BYTE min  = (t / 60000) % 60;
+    BYTE hour = (t / 3600000) % 24;
+
+    msg->str[0]  = to_ascii[hour / 10];
+    msg->str[1]  = to_ascii[hour % 10];
+    msg->str[2]  = 'h';
+    msg->str[3]  = to_ascii[min / 10];
+    msg->str[4]  = to_ascii[min % 10];
+    msg->str[5]  = 'm';
+    msg->str[6]  = to_ascii[sec / 10];
+    msg->str[7]  = to_ascii[sec % 10];
+    msg->str[8]  = 's';
+    msg->str[9]  = to_ascii[msec / 100];
+    msg->str[10] = to_ascii[(msec % 100) / 10];
+    msg->str[11] = to_ascii[msec % 10];
+    msg->str[12] = '-';
+
+    // gpslineのデータ例
+    // $GPGGA,101229.487,3723.2475,N,12158.3416,W,1,07,1.0,9.0,M, , , ,0000*3E
+
+    // 緯度 (N-3723.2475)
+    msg->str[13] = gpsline[28]; // N or S
+    msg->str[14] = '-';
+    for (int i = 0; i < 9; i++) // 9桁
+      msg->str[15+i] = gpsline[18+i];
+    msg->str[24] = '-';
+
+    // 経度 (E-12158.3416)
+    msg->str[25] = gpsline[41]; // E or W
+    msg->str[26] = '-';
+    for (int i = 0; i < 10; i++) // 10桁
+      msg->str[27+i] = gpsline[30+i];
+    msg->str[37] = '\r';
+    msg->str_idx = 0;
+    msg->str_sz = 38; // 固定長
+    return 1;
+  }
+  else {
+    // バイナリで送信モードは非サポート
+    return 0;
+  }
+}
+
+void parse_line(char* line)
 {
   if (line[0] == 'O' && mode & MODE_CONFIG) {
     // 通常受信モード(ACKを返す)
