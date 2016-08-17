@@ -480,8 +480,8 @@ BYTE gps_recv()
   if (c == '\n' || gpslinepos == GPS_LINE_MAX-1) {
     gpsline[gpslinepos] = 0; // null止め
     gpslinepos = 0;
-    // データチェック($GPGGAで始まること)
-    if (!strncmp(gpsline, "$GPGGA", 6))
+    // GPSデータチェック($GPGLLで始まり、$GPGLL,,でないこと)
+    if (!strncmp(gpsline, "$GPGLL", 6) && gpsline[7] != ',')
       return 1; // データあり
   }
   gpslinepos++;
@@ -514,20 +514,20 @@ BYTE gps_parse(struct canmsg_t* msg)
     msg->str[12] = '-';
 
     // gpslineのデータ例
-    // $GPGGA,101229.487,3723.2475,N,12158.3416,W,1,07,1.0,9.0,M, , , ,0000*3E
+    // $GPGLL,3421.7686,N,13222.3345,E,073132,A,A*49
 
     // 緯度 (N-3723.2475)
-    msg->str[13] = gpsline[28]; // N or S
+    msg->str[13] = gpsline[17]; // N or S
     msg->str[14] = '-';
     for (int i = 0; i < 9; i++) // 9桁
-      msg->str[15+i] = gpsline[18+i];
+      msg->str[15+i] = gpsline[7+i];
     msg->str[24] = '-';
 
     // 経度 (E-12158.3416)
-    msg->str[25] = gpsline[41]; // E or W
+    msg->str[25] = gpsline[30]; // E or W
     msg->str[26] = '-';
     for (int i = 0; i < 10; i++) // 10桁
-      msg->str[27+i] = gpsline[30+i];
+      msg->str[27+i] = gpsline[19+i];
     msg->str[37] = '\r';
     msg->str_idx = 0;
     msg->str_sz = 38; // 固定長
