@@ -67,7 +67,7 @@ struct canmsg_t
 };
 
 // CANメッセージバッファ
-#define MSG_MAX (6)
+#define MSG_MAX (8)
 struct canmsg_t msgbuffer[MSG_MAX];
 
 // 文字列変換テーブル
@@ -80,7 +80,7 @@ BYTE send_idx = 0;
 BYTE is_sending = 0;
 
 // GPS受信バッファ
-#define GPS_LINE_MAX (64)
+#define GPS_LINE_MAX (32)
 BYTE gpsline[GPS_LINE_MAX];
 BYTE gpslinepos = 0;
 
@@ -186,16 +186,17 @@ void main(void)
   /// メインループ開始 ///
   ////////////////////////
 
-  // 受信チャネル番号(0〜3)
+  // 受信チャネル番号(0〜3,4:GPS)
   BYTE ch = 0;
 
   while (1) {
     usb_process();
 
     // 受信処理 (1Loopで1chずつスライドしてチェックする)
-    ch = (ch + 1) % 4;
+    // ch:4の場合はCAN受信をスキップしてGPSを優先する
+    ch = (ch + 1) % 5;
 
-    if (is_received(ch)) { // 受信/エラーチェック
+    if (ch <= 4 && is_received(ch)) { // CAN受信/エラーチェック
       // 割り込み要因チェック
       BYTE reason = mcp2515_readreg(ch, CANINTF);
 
@@ -220,17 +221,13 @@ void main(void)
     }
     else if (PIR1bits.RCIF) { // GPSシリアル受信チェック
       if (gps_recv()) { // 解析対象受信データあり
+        // PIC内受信バッファオーバーする場合は
+        // GPSの送信はスキップする
         if (recv_count < MSG_MAX) {
           if (gps_parse(&msgbuffer[recv_idx]) > 0) {
             recv_count++;
             recv_idx = (recv_idx + 1) % MSG_MAX;
           }
-        } else {
-          // PIC内受信バッファオーバー(全部点灯)
-          mcp2515_modreg(0, BFPCTRL, 0x20, 0x20);
-          mcp2515_modreg(1, BFPCTRL, 0x20, 0x20);
-          mcp2515_modreg(2, BFPCTRL, 0x20, 0x20);
-          mcp2515_modreg(3, BFPCTRL, 0x20, 0x20);
         }
       }
     }
@@ -454,7 +451,7 @@ BYTE is_received(BYTE ch)
   // 受信割り込みピンを確認 GNDならMCP2515エラーor受信割り込み
   if (ch == 0)
     return !PORTCbits.RC2; // 14番ピン
-#if 0 // 4ch対応時に有効化する
+#if 1 // 4ch対応時に有効化する
   else if (ch == 1)
     return !PORTCbits.RC0; // 16番ピン
   else if (ch == 2)
@@ -480,9 +477,7 @@ BYTE gps_recv()
   if (c == '\n' || gpslinepos == GPS_LINE_MAX-1) {
     gpsline[gpslinepos] = 0; // null止め
     gpslinepos = 0;
-    // GPSデータチェック($GPGLLで始まり、$GPGLL,,でないこと)
-    if (!strncmp(gpsline, "$GPGLL", 6) && gpsline[7] != ',')
-      return 1; // データあり
+    return 1; // データあり
   }
   gpslinepos++;
   return 0; // データなし
@@ -491,6 +486,17 @@ BYTE gps_recv()
 BYTE gps_parse(struct canmsg_t* msg)
 {
   unsigned long t = time_msec;
+
+  // gpslineのデータ例
+  // $GPGLL,3421.7686,N,13222.3345,E,073132,A,A*49
+
+  BYTE lat_mark = gpsline[17]; // N or S
+  BYTE lon_mark = gpsline[30]; // E or W
+
+  if (strncmp(gpsline, "$GPGLL", 6)         || // $GPGLLから始まらない
+      !(lat_mark == 'N' || lat_mark == 'S') || // N でも Sでもない
+      !(lon_mark == 'E' || lon_mark == 'W'))    // E でも Wでもない
+    return 0; // 無効なデータ
 
   if (mode & MODE_ASCII) {
     // 文字列で送信
@@ -513,18 +519,15 @@ BYTE gps_parse(struct canmsg_t* msg)
     msg->str[11] = to_ascii[msec % 10];
     msg->str[12] = '-';
 
-    // gpslineのデータ例
-    // $GPGLL,3421.7686,N,13222.3345,E,073132,A,A*49
-
     // 緯度 (N-3723.2475)
-    msg->str[13] = gpsline[17]; // N or S
+    msg->str[13] = lat_mark;
     msg->str[14] = '-';
     for (int i = 0; i < 9; i++) // 9桁
       msg->str[15+i] = gpsline[7+i];
     msg->str[24] = '-';
 
     // 経度 (E-12158.3416)
-    msg->str[25] = gpsline[30]; // E or W
+    msg->str[25] = lon_mark;
     msg->str[26] = '-';
     for (int i = 0; i < 10; i++) // 10桁
       msg->str[27+i] = gpsline[19+i];
