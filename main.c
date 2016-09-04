@@ -97,6 +97,7 @@ BYTE linepos = 0;
 #define MODE_DATA    (0xF0) // 受信データ送信モード
 #define MODE_ASCII   (0x10) // 受信データを文字列化送信
 #define MODE_BINARY  (0x20) // 受信データをバイナリ送信
+#define MODE_IGNORE  (0x40) // 受信データを無視する
 BYTE mode = MODE_CONFIG | MODE_ASCII;
 
 void spi_enable(BYTE ch);
@@ -207,7 +208,19 @@ void main(void)
           mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
       }
 
-      if (reason & 0x03) { // 受信割り込み
+      if (reason & 0x01) { // RXB0受信割り込み
+        if (recv_count < MSG_MAX) {
+          if (mcp2515_recv(ch, &msgbuffer[recv_idx]) > 0) {
+            recv_count++;
+            recv_idx = (recv_idx + 1) % MSG_MAX;
+          }
+        } else {
+          // PIC内受信バッファオーバー
+          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
+        }
+      }
+
+      if (reason & 0x02) { // RXB1受信割り込み
         if (recv_count < MSG_MAX) {
           if (mcp2515_recv(ch, &msgbuffer[recv_idx]) > 0) {
             recv_count++;
@@ -231,6 +244,10 @@ void main(void)
         }
       }
     }
+
+    // 無視モードの時は受信数をクリアする
+    if (mode & MODE_IGNORE)
+      recv_count = 0;
 
     // USB送信処理
     while (usb_ep1_ready() && recv_count > 0) {
@@ -315,8 +332,8 @@ void mcp2515_init(BYTE ch)
   // コンフィグモードに移行
   // クロック出力 Fosc/2 24MHz/2=12MHz
   mcp2515_writereg(ch, CANCTRL, 0x85);
-  // RXB0,RXB1でフィルタマスクを使用しない
-  mcp2515_modreg(ch, RXB0CTRL, 0x60, 0x60);
+  // RXB0,RXB1でフィルタマスクを使用しない(ダブルバッファON)
+  mcp2515_modreg(ch, RXB0CTRL, 0x64, 0x64);
   mcp2515_modreg(ch, RXB1CTRL, 0x60, 0x60);
   // エラー及びRXB0,RXB1で受信割り込み設定
   mcp2515_writereg(ch, CANINTE, 0x23);
@@ -569,6 +586,9 @@ void parse_line(char* line)
   }
   else if (line[0] == 'B' && mode & MODE_CONFIG) {
     mode = (mode & MODE_MCP2515) | MODE_BINARY;
+  }
+  else if (line[0] == 'I' && mode & MODE_CONFIG) {
+    mode = (mode & MODE_MCP2515) | MODE_IGNORE;
   }
   else if (line[0] == 'C') {
     // 受信停止(コンフィグモードに戻す)
