@@ -98,6 +98,7 @@ BYTE linepos = 0;
 #define MODE_ASCII   (0x10) // 受信データを文字列化送信
 #define MODE_BINARY  (0x20) // 受信データをバイナリ送信
 #define MODE_IGNORE  (0x40) // 受信データを無視する
+#define MODE_DUMMY   (0x80) // ダミーデータを送信する
 BYTE mode = MODE_CONFIG | MODE_ASCII;
 
 void spi_enable(BYTE ch);
@@ -248,6 +249,19 @@ void main(void)
     // 無視モードの時は受信数をクリアする
     if (mode & MODE_IGNORE)
       recv_count = 0;
+
+    // ダミー送信モード
+    if (mode & MODE_DUMMY) {
+      if (recv_count < MSG_MAX) {
+        struct canmsg_t* p = &msgbuffer[recv_idx];
+        p->str[0]   = to_ascii[ch+1];
+        p->str[1]   = '\r';
+        p->str_idx  = 0;
+        p->str_sz   = 2;
+        recv_count++;
+        recv_idx = (recv_idx + 1) % MSG_MAX;
+      }
+    }
 
     // USB送信処理
     while (usb_ep1_ready() && recv_count > 0) {
@@ -589,6 +603,9 @@ void parse_line(char* line)
   }
   else if (line[0] == 'I' && mode & MODE_CONFIG) {
     mode = (mode & MODE_MCP2515) | MODE_IGNORE;
+  }
+  else if (line[0] == 'D' && mode & MODE_CONFIG) {
+    mode = (mode & MODE_MCP2515) | MODE_DUMMY;
   }
   else if (line[0] == 'C') {
     // 受信停止(コンフィグモードに戻す)
