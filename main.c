@@ -67,7 +67,8 @@ struct canmsg_t
 };
 
 // CANメッセージバッファ
-#define MSG_MAX (8)
+//#define MSG_MAX (8)
+#define MSG_MAX (6)
 struct canmsg_t msgbuffer[MSG_MAX];
 
 // 文字列変換テーブル
@@ -112,6 +113,7 @@ void mcp2515_writereg(BYTE ch, BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE ch, BYTE addr);
 void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data);
 BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg);
+BYTE mcp2515_recv_dummy(BYTE ch, struct canmsg_t* msg);
 BYTE is_received(BYTE ch);
 BYTE gps_recv();
 BYTE gps_parse(struct canmsg_t* msg);
@@ -233,6 +235,17 @@ void main(void)
         }
       }
     }
+    else if (ch == 1 && (mode & MODE_DUMMY)) {
+      if (recv_count < MSG_MAX) {
+        if (mcp2515_recv_dummy(ch, &msgbuffer[recv_idx]) > 0) {
+          recv_count++;
+          recv_idx = (recv_idx + 1) % MSG_MAX;
+        } else {
+          // PIC内受信バッファオーバー
+          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
+        }
+      }
+    }
     else if (PIR1bits.RCIF) { // GPSシリアル受信チェック
       if (gps_recv()) { // 解析対象受信データあり
         // PIC内受信バッファオーバーする場合は
@@ -250,6 +263,7 @@ void main(void)
     if (mode & MODE_IGNORE)
       recv_count = 0;
 
+#if 0
     // ダミー送信モード
     if (mode & MODE_DUMMY) {
       if (recv_count < MSG_MAX) {
@@ -267,6 +281,7 @@ void main(void)
         recv_idx = (recv_idx + 1) % MSG_MAX;
       }
     }
+#endif
 
     // USB送信処理
     while (usb_ep1_ready() && recv_count > 0) {
@@ -455,13 +470,14 @@ BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg)
     msg->str[18] = '-';
     msg->str[19] = to_ascii[dlc];
     msg->str[20] = '-';
-    for (int i = 0; i < dlc; i++) {
+    //for (int i = 0; i < dlc; i++) {
+    for (int i = 0; i < 8; i++) {
       msg->str[21+(i*2)]   = to_ascii[(data[i] >> 4) & 0x0F];
       msg->str[21+(i*2)+1] = to_ascii[(data[i] >> 0) & 0x0F];
     }
-    msg->str[21+(dlc*2)] = '\r';
+    msg->str[37] = '\r';
     msg->str_idx = 0;
-    msg->str_sz = 21 + (dlc * 2) + 1;
+    msg->str_sz = 38; // 固定長
   }
   else {
     // バイナリで送信 (時刻:4Byte + チャネル:1Byte + id:2Byte + dlc:1Byte + data:8Byte)
@@ -478,6 +494,53 @@ BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg)
     msg->str_idx = 0;
     msg->str_sz = 16; // 固定長
   }
+
+  return 1;
+}
+
+BYTE mcp2515_recv_dummy(BYTE ch, struct canmsg_t* msg)
+{
+  WORD id = 0x7FF;
+  BYTE dlc = 8;
+  BYTE data[8] = {1,2,3,4,5,6,7,8};
+  unsigned long t = time_msec;
+
+  // 文字列で送信
+  WORD msec = t % 1000;
+  BYTE sec  = (t / 1000) % 60;
+  BYTE min  = (t / 60000) % 60;
+  BYTE hour = (t / 3600000) % 24;
+
+  msg->str[0]  = to_ascii[hour / 10];
+  msg->str[1]  = to_ascii[hour % 10];
+  msg->str[2]  = 'h';
+  msg->str[3]  = to_ascii[min / 10];
+  msg->str[4]  = to_ascii[min % 10];
+  msg->str[5]  = 'm';
+  msg->str[6]  = to_ascii[sec / 10];
+  msg->str[7]  = to_ascii[sec % 10];
+  msg->str[8]  = 's';
+  msg->str[9]  = to_ascii[msec / 100];
+  msg->str[10] = to_ascii[(msec % 100) / 10];
+  msg->str[11] = to_ascii[msec % 10];
+  msg->str[12] = '-';
+
+  msg->str[13] = to_ascii[ch+1]; // 0-3 -> 1-4
+  msg->str[14] = '-';
+
+  msg->str[15] = to_ascii[(id >> 8) & 0x0F];
+  msg->str[16] = to_ascii[(id >> 4) & 0x0F];
+  msg->str[17] = to_ascii[(id >> 0) & 0x0F];
+  msg->str[18] = '-';
+  msg->str[19] = to_ascii[dlc];
+  msg->str[20] = '-';
+  for (int i = 0; i < 8; i++) {
+    msg->str[21+(i*2)]   = to_ascii[(data[i] >> 4) & 0x0F];
+    msg->str[21+(i*2)+1] = to_ascii[(data[i] >> 0) & 0x0F];
+  }
+  msg->str[37] = '\r';
+  msg->str_idx = 0;
+  msg->str_sz = 38; // 固定長
 
   return 1;
 }
