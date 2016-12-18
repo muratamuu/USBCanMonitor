@@ -200,7 +200,7 @@ void main(void)
     // ch:4の場合はCAN受信をスキップしてGPSを優先する
     ch = (ch + 1) % 5;
 
-    if (ch <= 4 && is_received(ch)) { // CAN受信/エラーチェック
+    if (ch < 4 && is_received(ch)) { // CAN受信/エラーチェック
       // 割り込み要因チェック
       BYTE reason = mcp2515_readreg(ch, CANINTF);
 
@@ -235,7 +235,7 @@ void main(void)
         }
       }
     }
-    else if (ch == 1 && (mode & MODE_DUMMY)) {
+    else if (ch == 0 && (mode & MODE_DUMMY)) {
       if (recv_count < MSG_MAX) {
         if (mcp2515_recv_dummy(ch, &msgbuffer[recv_idx]) > 0) {
           recv_count++;
