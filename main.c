@@ -254,10 +254,15 @@ void main(void)
     if (mode & MODE_DUMMY) {
       if (recv_count < MSG_MAX) {
         struct canmsg_t* p = &msgbuffer[recv_idx];
-        p->str[0]   = to_ascii[ch+1];
-        p->str[1]   = '\r';
+        p->str[0]   = 'H';
+        p->str[1]   = 'e';
+        p->str[2]   = 'l';
+        p->str[3]   = 'l';
+        p->str[4]   = 'o';
+        p->str[5]   = to_ascii[ch+1];
+        p->str[6]   = '\r';
         p->str_idx  = 0;
-        p->str_sz   = 2;
+        p->str_sz   = 7;
         recv_count++;
         recv_idx = (recv_idx + 1) % MSG_MAX;
       }
