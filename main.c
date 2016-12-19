@@ -25,6 +25,7 @@
 #define BFPCTRL  (0x0C) // BIT_MOD可能
 #define CANSTAT  (0x0E)
 #define CANCTRL  (0x0F)
+#define REC      (0x1D)
 #define CNF3     (0x28) // BIT_MOD可能
 #define CNF2     (0x29) // BIT_MOD可能
 #define CNF1     (0x2A) // BIT_MOD可能
@@ -97,6 +98,7 @@ BYTE linepos = 0;
 #define MODE_DATA    (0xF0) // 受信データ送信モード
 #define MODE_ASCII   (0x10) // 受信データを文字列化送信
 #define MODE_BINARY  (0x20) // 受信データをバイナリ送信
+#define MODE_ERRCHK  (0x40) // エラーチェック
 BYTE mode = MODE_CONFIG | MODE_ASCII;
 
 void spi_enable(BYTE ch);
@@ -110,7 +112,7 @@ void mcp2515_writereg(BYTE ch, BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE ch, BYTE addr);
 void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data);
 BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg);
-BYTE mcp2515_recv_dummy(BYTE ch, struct canmsg_t* msg);
+BYTE mcp2515_errchk(struct canmsg_t* msg);
 BYTE is_received(BYTE ch);
 BYTE gps_recv();
 BYTE gps_parse(struct canmsg_t* msg);
@@ -197,7 +199,16 @@ void main(void)
     // ch:4の場合はCAN受信をスキップしてGPSを優先する
     ch = (ch + 1) % 5;
 
-    if (ch < 4 && is_received(ch)) { // CAN受信/エラーチェック
+    if (mode & MODE_ERRCHK) { // エラーチェック
+      if (recv_count < MSG_MAX) {
+        if (mcp2515_errchk(&msgbuffer[recv_idx]) > 0) {
+          recv_count++;
+          recv_idx = (recv_idx + 1) % MSG_MAX;
+          mode &= ~MODE_ERRCHK;
+        }
+      }
+    }
+    else if (ch < 4 && is_received(ch)) { // CAN受信/エラーチェック
       // 割り込み要因チェック
       BYTE reason = mcp2515_readreg(ch, CANINTF);
 
@@ -460,12 +471,18 @@ BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg)
   return 1;
 }
 
-BYTE mcp2515_recv_dummy(BYTE ch, struct canmsg_t* msg)
+BYTE mcp2515_errchk(struct canmsg_t* msg)
 {
-  WORD id = 0x7FF;
-  BYTE dlc = 8;
-  BYTE data[8] = {1,2,3,4,5,6,7,8};
+  BYTE i = 0;
   unsigned long t = time_msec;
+  BYTE eflg1 = mcp2515_readreg(0, EFLG);
+  BYTE eflg2 = mcp2515_readreg(1, EFLG);
+  BYTE eflg3 = mcp2515_readreg(2, EFLG);
+  BYTE eflg4 = mcp2515_readreg(3, EFLG);
+  BYTE rec1  = mcp2515_readreg(0, REC);
+  BYTE rec2  = mcp2515_readreg(1, REC);
+  BYTE rec3  = mcp2515_readreg(2, REC);
+  BYTE rec4  = mcp2515_readreg(3, REC);
 
   // 文字列で送信
   WORD msec = t % 1000;
@@ -473,34 +490,54 @@ BYTE mcp2515_recv_dummy(BYTE ch, struct canmsg_t* msg)
   BYTE min  = (t / 60000) % 60;
   BYTE hour = (t / 3600000) % 24;
 
-  msg->str[0]  = to_ascii[hour / 10];
-  msg->str[1]  = to_ascii[hour % 10];
-  msg->str[2]  = 'h';
-  msg->str[3]  = to_ascii[min / 10];
-  msg->str[4]  = to_ascii[min % 10];
-  msg->str[5]  = 'm';
-  msg->str[6]  = to_ascii[sec / 10];
-  msg->str[7]  = to_ascii[sec % 10];
-  msg->str[8]  = 's';
-  msg->str[9]  = to_ascii[msec / 100];
-  msg->str[10] = to_ascii[(msec % 100) / 10];
-  msg->str[11] = to_ascii[msec % 10];
-  msg->str[12] = '-';
+  msg->str[0]  = 'E';
+  msg->str[1]  = 'R';
+  msg->str[2]  = 'R';
+  msg->str[3]  = 'C';
+  msg->str[4]  = 'H';
+  msg->str[5]  = 'K';
+  msg->str[6]  = '-';
 
-  msg->str[13] = to_ascii[ch+1]; // 0-3 -> 1-4
-  msg->str[14] = '-';
+  // ch1
+  msg->str[7] = to_ascii[1];
+  msg->str[8] = ':';
+  msg->str[9] = to_ascii[(eflg1 >> 4) & 0x0F];
+  msg->str[10] = to_ascii[(eflg1 >> 0) & 0x0F];
+  msg->str[11] = to_ascii[(rec1  >> 4) & 0x0F];
+  msg->str[12] = to_ascii[(rec1  >> 0) & 0x0F];
+  msg->str[13] = '-';
 
-  msg->str[15] = to_ascii[(id >> 8) & 0x0F];
-  msg->str[16] = to_ascii[(id >> 4) & 0x0F];
-  msg->str[17] = to_ascii[(id >> 0) & 0x0F];
-  msg->str[18] = '-';
-  msg->str[19] = to_ascii[dlc];
+  // ch2
+  msg->str[14] = to_ascii[2];
+  msg->str[15] = ':';
+  msg->str[16] = to_ascii[(eflg2 >> 4) & 0x0F];
+  msg->str[17] = to_ascii[(eflg2 >> 0) & 0x0F];
+  msg->str[18] = to_ascii[(rec2  >> 4) & 0x0F];
+  msg->str[19] = to_ascii[(rec2  >> 0) & 0x0F];
   msg->str[20] = '-';
-  for (int i = 0; i < 8; i++) {
-    msg->str[21+(i*2)]   = to_ascii[(data[i] >> 4) & 0x0F];
-    msg->str[21+(i*2)+1] = to_ascii[(data[i] >> 0) & 0x0F];
-  }
+
+  // ch3
+  msg->str[21] = to_ascii[3];
+  msg->str[22] = ':';
+  msg->str[23] = to_ascii[(eflg3 >> 4) & 0x0F];
+  msg->str[24] = to_ascii[(eflg3 >> 0) & 0x0F];
+  msg->str[25] = to_ascii[(rec3  >> 4) & 0x0F];
+  msg->str[26] = to_ascii[(rec3  >> 0) & 0x0F];
+  msg->str[27] = '-';
+
+  // ch4
+  msg->str[28] = to_ascii[4];
+  msg->str[29] = ':';
+  msg->str[30] = to_ascii[(eflg4 >> 4) & 0x0F];
+  msg->str[31] = to_ascii[(eflg4 >> 0) & 0x0F];
+  msg->str[32] = to_ascii[(rec4  >> 4) & 0x0F];
+  msg->str[33] = to_ascii[(rec4  >> 0) & 0x0F];
+  msg->str[34] = '-';
+
+  msg->str[35] = '-';
+  msg->str[36] = '-';
   msg->str[37] = '\r';
+
   msg->str_idx = 0;
   msg->str_sz = 38; // 固定長
 
@@ -643,6 +680,9 @@ void parse_line(char* line)
     send_idx = 0;
     is_sending = 0;
     LATBbits.LATB5 = 0; // Main-LED消灯
+  }
+  else if (line[0] == 'E') {
+    mode |= MODE_ERRCHK;
   }
   else if (line[0] == 'R') {
     // リセット
