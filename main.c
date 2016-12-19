@@ -67,8 +67,7 @@ struct canmsg_t
 };
 
 // CANメッセージバッファ
-//#define MSG_MAX (8)
-#define MSG_MAX (6)
+#define MSG_MAX (8)
 struct canmsg_t msgbuffer[MSG_MAX];
 
 // 文字列変換テーブル
@@ -98,8 +97,6 @@ BYTE linepos = 0;
 #define MODE_DATA    (0xF0) // 受信データ送信モード
 #define MODE_ASCII   (0x10) // 受信データを文字列化送信
 #define MODE_BINARY  (0x20) // 受信データをバイナリ送信
-#define MODE_IGNORE  (0x40) // 受信データを無視する
-#define MODE_DUMMY   (0x80) // ダミーデータを送信する
 BYTE mode = MODE_CONFIG | MODE_ASCII;
 
 void spi_enable(BYTE ch);
@@ -235,17 +232,6 @@ void main(void)
         }
       }
     }
-    else if (ch == 0 && (mode & MODE_DUMMY)) {
-      if (recv_count < MSG_MAX) {
-        if (mcp2515_recv_dummy(ch, &msgbuffer[recv_idx]) > 0) {
-          recv_count++;
-          recv_idx = (recv_idx + 1) % MSG_MAX;
-        } else {
-          // PIC内受信バッファオーバー
-          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
-        }
-      }
-    }
     else if (PIR1bits.RCIF) { // GPSシリアル受信チェック
       if (gps_recv()) { // 解析対象受信データあり
         // PIC内受信バッファオーバーする場合は
@@ -258,30 +244,6 @@ void main(void)
         }
       }
     }
-
-    // 無視モードの時は受信数をクリアする
-    if (mode & MODE_IGNORE)
-      recv_count = 0;
-
-#if 0
-    // ダミー送信モード
-    if (mode & MODE_DUMMY) {
-      if (recv_count < MSG_MAX) {
-        struct canmsg_t* p = &msgbuffer[recv_idx];
-        p->str[0]   = 'H';
-        p->str[1]   = 'e';
-        p->str[2]   = 'l';
-        p->str[3]   = 'l';
-        p->str[4]   = 'o';
-        p->str[5]   = to_ascii[ch+1];
-        p->str[6]   = '\r';
-        p->str_idx  = 0;
-        p->str_sz   = 7;
-        recv_count++;
-        recv_idx = (recv_idx + 1) % MSG_MAX;
-      }
-    }
-#endif
 
     // USB送信処理
     while (usb_ep1_ready() && recv_count > 0) {
@@ -668,12 +630,6 @@ void parse_line(char* line)
   }
   else if (line[0] == 'B' && mode & MODE_CONFIG) {
     mode = (mode & MODE_MCP2515) | MODE_BINARY;
-  }
-  else if (line[0] == 'I' && mode & MODE_CONFIG) {
-    mode = (mode & MODE_MCP2515) | MODE_IGNORE;
-  }
-  else if (line[0] == 'D' && mode & MODE_CONFIG) {
-    mode = (mode & MODE_MCP2515) | MODE_DUMMY;
   }
   else if (line[0] == 'C') {
     // 受信停止(コンフィグモードに戻す)
