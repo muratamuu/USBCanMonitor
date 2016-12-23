@@ -77,8 +77,11 @@ struct canmsg_t
 };
 
 // CANメッセージバッファ
-#define MSG_MAX (10)
+#define MSG_MAX (8)
 struct canmsg_t msgbuffer[MSG_MAX];
+
+BYTE peek_recv_count = 0;
+unsigned long max_recv_count = 0;
 
 // 文字列変換テーブル
 const char* to_ascii = "0123456789ABCDEF";
@@ -103,7 +106,9 @@ BYTE linepos = 0;
 #define MODE_CONFIG  (0x01) // MCP2515コンフィグモード
 #define MODE_NORMAL  (0x02) // MCP2515通常受信モード(ACK送信有)
 #define MODE_LISTEN  (0x04) // MCP2515リスンオンリモード
-#define MODE_ERRCHK  (0x40) // エラーチェック
+#define MODE_ERRCHK  (0x10) // エラーチェック
+#define MODE_PCNTCHK (0x20) // ピーク受信カウンタチェック
+#define MODE_MCNTCHK (0x40) // 最大受信カウンタチェック
 BYTE mode = MODE_CONFIG;
 
 void spi_enable(BYTE ch);
@@ -117,6 +122,7 @@ void mcp2515_writereg(BYTE ch, BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE ch, BYTE addr);
 void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data);
 void mcp2515_recv(BYTE ch, BYTE cmd, struct canmsg_t* msg);
+void mcp2515_cntchk(struct canmsg_t* msg, unsigned long counter);
 void mcp2515_errchk(struct canmsg_t* msg);
 BYTE is_received(BYTE ch);
 BYTE gps_recv();
@@ -204,6 +210,20 @@ void main(void)
       recv_idx = (recv_idx + 1) % MSG_MAX;
       mode &= ~MODE_ERRCHK;
     }
+    // ピーク受信カウンタチェックコマンド処理
+    if ((mode & MODE_PCNTCHK) && recv_count < MSG_MAX) {
+      mcp2515_cntchk(&msgbuffer[recv_idx], peek_recv_count);
+      recv_count++;
+      recv_idx = (recv_idx + 1) % MSG_MAX;
+      mode &= ~MODE_PCNTCHK;
+    }
+    // 最大受信カウンタチェックコマンド処理
+    if ((mode & MODE_MCNTCHK) && recv_count < MSG_MAX) {
+      mcp2515_cntchk(&msgbuffer[recv_idx], max_recv_count);
+      recv_count++;
+      recv_idx = (recv_idx + 1) % MSG_MAX;
+      mode &= ~MODE_MCNTCHK;
+    }
 
     for (BYTE ch = 0; ch < 4; ++ch) {
       if (is_received(ch)) { // CAN受信/エラー割り込みチェック
@@ -221,6 +241,7 @@ void main(void)
           mcp2515_modreg(ch, CANINTF, 0x01, 0x00);   // RXB0受信フラグを落とす
           recv_count++;
           recv_idx = (recv_idx + 1) % MSG_MAX;
+          max_recv_count++;
         }
 
         if (reason & 0x02 && recv_count < MSG_MAX) { // RXB1受信割り込み
@@ -228,6 +249,7 @@ void main(void)
           mcp2515_modreg(ch, CANINTF, 0x02, 0x00);   // RXB1受信フラグを落とす
           recv_count++;
           recv_idx = (recv_idx + 1) % MSG_MAX;
+          max_recv_count++;
         }
       }
     } // end of for
@@ -247,6 +269,8 @@ void main(void)
 
     // USB送信処理
     while (usb_ep1_ready() && recv_count > 0) {
+      if (recv_count > peek_recv_count)
+        peek_recv_count = recv_count;
       is_sending = 1;
       struct canmsg_t* msg = &msgbuffer[send_idx];
       usb_putch(msg->str[msg->str_idx++]);
@@ -444,6 +468,23 @@ void mcp2515_recv(BYTE ch, BYTE cmd, struct canmsg_t* msg)
   msg->str_sz = 31; // 固定長
 }
 
+void mcp2515_cntchk(struct canmsg_t* msg, unsigned long counter)
+{
+  msg->str[0] = 'C';
+  msg->str[1] = to_ascii[(counter >> 28) & 0x0F];
+  msg->str[2] = to_ascii[(counter >> 24) & 0x0F];
+  msg->str[3] = to_ascii[(counter >> 20) & 0x0F];
+  msg->str[4] = to_ascii[(counter >> 16) & 0x0F];
+  msg->str[5] = to_ascii[(counter >> 12) & 0x0F];
+  msg->str[6] = to_ascii[(counter >> 8) & 0x0F];
+  msg->str[7] = to_ascii[(counter >> 4) & 0x0F];
+  msg->str[8] = to_ascii[(counter >> 0) & 0x0F];
+  msg->str[9] = '\r';
+
+  msg->str_idx = 0;
+  msg->str_sz  = 10; // 固定長
+}
+
 void mcp2515_errchk(struct canmsg_t* msg)
 {
   BYTE eflg1 = mcp2515_readreg(0, EFLG);
@@ -616,6 +657,12 @@ void parse_line(char* line)
     send_idx = 0;
     is_sending = 0;
     LATBbits.LATB5 = 0; // Main-LED消灯
+  }
+  else if (line[0] == 'P') {
+    mode |= MODE_PCNTCHK;
+  }
+  else if (line[0] == 'M') {
+    mode |= MODE_MCNTCHK;
   }
   else if (line[0] == 'E') {
     mode |= MODE_ERRCHK;
