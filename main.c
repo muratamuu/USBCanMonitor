@@ -238,7 +238,6 @@ void main(void)
 
         if (reason & 0x01 && recv_count < MSG_MAX) { // RXB0受信割り込み
           mcp2515_recv(ch, SPI_RXB0_READ, &msgbuffer[recv_idx]);
-          mcp2515_modreg(ch, CANINTF, 0x01, 0x00);   // RXB0受信フラグを落とす
           recv_count++;
           recv_idx = (recv_idx + 1) % MSG_MAX;
           max_recv_count++;
@@ -246,7 +245,6 @@ void main(void)
 
         if (reason & 0x02 && recv_count < MSG_MAX) { // RXB1受信割り込み
           mcp2515_recv(ch, SPI_RXB1_READ, &msgbuffer[recv_idx]);
-          mcp2515_modreg(ch, CANINTF, 0x02, 0x00);   // RXB1受信フラグを落とす
           recv_count++;
           recv_idx = (recv_idx + 1) % MSG_MAX;
           max_recv_count++;
@@ -652,6 +650,8 @@ void parse_line(char* line)
     mcp2515_modreg(2, CANCTRL, 0xE0, 0x80);
     mcp2515_modreg(3, CANCTRL, 0xE0, 0x80);
     mode = MODE_CONFIG;
+    peek_recv_count = 0;
+    max_recv_count = 0;
     recv_count = 0;
     recv_idx = 0;
     send_idx = 0;
