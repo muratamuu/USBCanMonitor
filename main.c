@@ -211,7 +211,7 @@ void main(void)
         BYTE reason = mcp2515_readreg(ch, CANINTF);
 
         if (reason & 0x20) { // エラー割り込み
-          if (mcp2515_readreg(ch, EFLG) & 0xC0)      // MCP2515受信バッファオーバーフロー
+          if (mcp2515_readreg(ch, EFLG) & 0x80) // MCP2515受信RXB1オーバーフロー
             mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
           mcp2515_modreg(ch, CANINTF, 0x20, 0x00);   // エラーフラグを落とす
         }
