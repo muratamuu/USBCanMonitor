@@ -1,6 +1,6 @@
 TARGET = main.hex
 SRC = main.c usb_cdc.c
-CC = /Applications/microchip/xc8/v1.37/bin/xc8
+CC = /Applications/microchip/xc8/v1.40/bin/xc8
 
 all: $(TARGET)
 

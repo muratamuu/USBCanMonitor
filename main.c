@@ -77,7 +77,7 @@ struct canmsg_t
 };
 
 // CANメッセージバッファ
-#define MSG_MAX (8)
+#define MSG_MAX (10)
 struct canmsg_t msgbuffer[MSG_MAX];
 
 BYTE peek_recv_count = 0;
