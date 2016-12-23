@@ -25,7 +25,16 @@
 #define BFPCTRL  (0x0C) // BIT_MOD可能
 #define CANSTAT  (0x0E)
 #define CANCTRL  (0x0F)
+#define TEC      (0x1C)
 #define REC      (0x1D)
+#define RXM0SIDH (0x20)
+#define RXM0SIDL (0x21)
+#define RXM0EID8 (0x22)
+#define RXM0EID0 (0x23)
+#define RXM1SIDH (0x24)
+#define RXM1SIDL (0x25)
+#define RXM1EID8 (0x26)
+#define RXM1EID0 (0x27)
 #define CNF3     (0x28) // BIT_MOD可能
 #define CNF2     (0x29) // BIT_MOD可能
 #define CNF1     (0x2A) // BIT_MOD可能
@@ -58,8 +67,8 @@ typedef unsigned short WORD;
 unsigned long time_msec;
 
 // CANメッセージ構造体
-#define MSG_STR_MAX (38) // 00h00m00s000-0-000-0-0000000000000000 (37+1)
-                         // 00h00m00s000-N-0000.0000-E-00000.0000 (37+1)
+#define MSG_STR_MAX (31) // 24595999917FF81122334455667788 (30+1)
+                         // 000000000N0000.0000E00000.0000 (30+1)
 struct canmsg_t
 {
   char str[MSG_STR_MAX];
@@ -68,7 +77,7 @@ struct canmsg_t
 };
 
 // CANメッセージバッファ
-#define MSG_MAX (8)
+#define MSG_MAX (10)
 struct canmsg_t msgbuffer[MSG_MAX];
 
 // 文字列変換テーブル
@@ -91,15 +100,11 @@ BYTE line[LINE_MAX];
 BYTE linepos = 0;
 
 // アプリケーションモード
-#define MODE_MCP2515 (0x0F) // MCP2515モード
 #define MODE_CONFIG  (0x01) // MCP2515コンフィグモード
 #define MODE_NORMAL  (0x02) // MCP2515通常受信モード(ACK送信有)
 #define MODE_LISTEN  (0x04) // MCP2515リスンオンリモード
-#define MODE_DATA    (0xF0) // 受信データ送信モード
-#define MODE_ASCII   (0x10) // 受信データを文字列化送信
-#define MODE_BINARY  (0x20) // 受信データをバイナリ送信
 #define MODE_ERRCHK  (0x40) // エラーチェック
-BYTE mode = MODE_CONFIG | MODE_ASCII;
+BYTE mode = MODE_CONFIG;
 
 void spi_enable(BYTE ch);
 void spi_disable(BYTE ch);
@@ -111,8 +116,8 @@ void mcp2515_bitrate_allch(BYTE cnf1, BYTE cnf2, BYTE cnf3);
 void mcp2515_writereg(BYTE ch, BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE ch, BYTE addr);
 void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data);
-BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg);
-BYTE mcp2515_errchk(struct canmsg_t* msg);
+void mcp2515_recv(BYTE ch, BYTE cmd, struct canmsg_t* msg);
+void mcp2515_errchk(struct canmsg_t* msg);
 BYTE is_received(BYTE ch);
 BYTE gps_recv();
 BYTE gps_parse(struct canmsg_t* msg);
@@ -189,61 +194,45 @@ void main(void)
   /// メインループ開始 ///
   ////////////////////////
 
-  // 受信チャネル番号(0〜3,4:GPS)
-  BYTE ch = 0;
-
   while (1) {
     usb_process();
 
-    // 受信処理 (1Loopで1chずつスライドしてチェックする)
-    // ch:4の場合はCAN受信をスキップしてGPSを優先する
-    ch = (ch + 1) % 5;
+    // エラーチェックコマンド処理
+    if ((mode & MODE_ERRCHK) && recv_count < MSG_MAX) {
+      mcp2515_errchk(&msgbuffer[recv_idx]);
+      recv_count++;
+      recv_idx = (recv_idx + 1) % MSG_MAX;
+      mode &= ~MODE_ERRCHK;
+    }
 
-    if (mode & MODE_ERRCHK) { // エラーチェック
-      if (recv_count < MSG_MAX) {
-        if (mcp2515_errchk(&msgbuffer[recv_idx]) > 0) {
+    for (BYTE ch = 0; ch < 4; ++ch) {
+      if (is_received(ch)) { // CAN受信/エラー割り込みチェック
+        // 割り込み要因チェック
+        BYTE reason = mcp2515_readreg(ch, CANINTF);
+
+        if (reason & 0x20) { // エラー割り込み
+          if (mcp2515_readreg(ch, EFLG) & 0xC0)      // MCP2515受信バッファオーバーフロー
+            mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
+          mcp2515_modreg(ch, CANINTF, 0x20, 0x00);   // エラーフラグを落とす
+        }
+
+        if (reason & 0x01 && recv_count < MSG_MAX) { // RXB0受信割り込み
+          mcp2515_recv(ch, SPI_RXB0_READ, &msgbuffer[recv_idx]);
+          mcp2515_modreg(ch, CANINTF, 0x01, 0x00);   // RXB0受信フラグを落とす
           recv_count++;
           recv_idx = (recv_idx + 1) % MSG_MAX;
-          mode &= ~MODE_ERRCHK;
+        }
+
+        if (reason & 0x02 && recv_count < MSG_MAX) { // RXB1受信割り込み
+          mcp2515_recv(ch, SPI_RXB1_READ, &msgbuffer[recv_idx]);
+          mcp2515_modreg(ch, CANINTF, 0x02, 0x00);   // RXB1受信フラグを落とす
+          recv_count++;
+          recv_idx = (recv_idx + 1) % MSG_MAX;
         }
       }
-    }
-    else if (ch < 4 && is_received(ch)) { // CAN受信/エラーチェック
-      // 割り込み要因チェック
-      BYTE reason = mcp2515_readreg(ch, CANINTF);
+    } // end of for
 
-      if (reason & 0x20) { // エラー割り込み
-        mcp2515_modreg(ch, CANINTF, 0x20, 0x00); // エラーフラグを落とす
-        if (mcp2515_readreg(ch, EFLG) & 0xC0)
-          // MCP2515受信バッファオーバー
-          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
-      }
-
-      if (reason & 0x01) { // RXB0受信割り込み
-        if (recv_count < MSG_MAX) {
-          if (mcp2515_recv(ch, &msgbuffer[recv_idx]) > 0) {
-            recv_count++;
-            recv_idx = (recv_idx + 1) % MSG_MAX;
-          }
-        } else {
-          // PIC内受信バッファオーバー
-          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
-        }
-      }
-
-      if (reason & 0x02) { // RXB1受信割り込み
-        if (recv_count < MSG_MAX) {
-          if (mcp2515_recv(ch, &msgbuffer[recv_idx]) > 0) {
-            recv_count++;
-            recv_idx = (recv_idx + 1) % MSG_MAX;
-          }
-        } else {
-          // PIC内受信バッファオーバー
-          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
-        }
-      }
-    }
-    else if (PIR1bits.RCIF) { // GPSシリアル受信チェック
+    if (PIR1bits.RCIF) { // GPSシリアル受信チェック
       if (gps_recv()) { // 解析対象受信データあり
         // PIC内受信バッファオーバーする場合は
         // GPSの送信はスキップする
@@ -340,8 +329,19 @@ void mcp2515_init(BYTE ch)
   // クロック出力 Fosc/2 24MHz/2=12MHz
   mcp2515_writereg(ch, CANCTRL, 0x85);
   // RXB0,RXB1でフィルタマスクを使用しない(ダブルバッファON)
-  mcp2515_modreg(ch, RXB0CTRL, 0x64, 0x64);
-  mcp2515_modreg(ch, RXB1CTRL, 0x60, 0x60);
+  /* mcp2515_modreg(ch, RXB0CTRL, 0x64, 0x64); */
+  /* mcp2515_modreg(ch, RXB1CTRL, 0x60, 0x60); */
+  mcp2515_writereg(ch, RXB0CTRL, 0x04);
+  mcp2515_writereg(ch, RXB1CTRL, 0x00);
+  // フィルタマスク初期化(一切フィルタしない設定)
+  mcp2515_writereg(ch, RXM0SIDH, 0x00);
+  mcp2515_writereg(ch, RXM0SIDL, 0x00);
+  mcp2515_writereg(ch, RXM0EID8, 0x00);
+  mcp2515_writereg(ch, RXM0EID0, 0x00);
+  mcp2515_writereg(ch, RXM1SIDH, 0x00);
+  mcp2515_writereg(ch, RXM1SIDL, 0x00);
+  mcp2515_writereg(ch, RXM1EID8, 0x00);
+  mcp2515_writereg(ch, RXM1EID0, 0x00);
   // エラー及びRXB0,RXB1で受信割り込み設定
   mcp2515_writereg(ch, CANINTE, 0x23);
   // CANビットレート設定(default)
@@ -393,7 +393,7 @@ void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data)
   spi_disable(ch);
 }
 
-BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg)
+void mcp2515_recv(BYTE ch, BYTE cmd, struct canmsg_t* msg)
 {
   WORD id;
   BYTE dlc;
@@ -401,7 +401,7 @@ BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg)
   unsigned long t = time_msec;
 
   spi_enable(ch);
-  spi_transmit(SPI_RXB0_READ); // RXB0受信
+  spi_transmit(cmd); // RXB0/RXB1受信
 
   id = (WORD)spi_transmit(0xFF) << 3;
   id |= (WORD)spi_transmit(0xFF) >> 5;
@@ -413,150 +413,105 @@ BYTE mcp2515_recv(BYTE ch, struct canmsg_t* msg)
 
   spi_disable(ch);
 
-  if (mode & MODE_ASCII) {
-    // 文字列で送信
-    WORD msec = t % 1000;
-    BYTE sec  = (t / 1000) % 60;
-    BYTE min  = (t / 60000) % 60;
-    BYTE hour = (t / 3600000) % 24;
-
-    msg->str[0]  = to_ascii[hour / 10];
-    msg->str[1]  = to_ascii[hour % 10];
-    msg->str[2]  = 'h';
-    msg->str[3]  = to_ascii[min / 10];
-    msg->str[4]  = to_ascii[min % 10];
-    msg->str[5]  = 'm';
-    msg->str[6]  = to_ascii[sec / 10];
-    msg->str[7]  = to_ascii[sec % 10];
-    msg->str[8]  = 's';
-    msg->str[9]  = to_ascii[msec / 100];
-    msg->str[10] = to_ascii[(msec % 100) / 10];
-    msg->str[11] = to_ascii[msec % 10];
-    msg->str[12] = '-';
-
-    msg->str[13] = to_ascii[ch+1]; // 0-3 -> 1-4
-    msg->str[14] = '-';
-
-    msg->str[15] = to_ascii[(id >> 8) & 0x0F];
-    msg->str[16] = to_ascii[(id >> 4) & 0x0F];
-    msg->str[17] = to_ascii[(id >> 0) & 0x0F];
-    msg->str[18] = '-';
-    msg->str[19] = to_ascii[dlc];
-    msg->str[20] = '-';
-    //for (int i = 0; i < dlc; i++) {
-    for (int i = 0; i < 8; i++) {
-      msg->str[21+(i*2)]   = to_ascii[(data[i] >> 4) & 0x0F];
-      msg->str[21+(i*2)+1] = to_ascii[(data[i] >> 0) & 0x0F];
-    }
-    msg->str[37] = '\r';
-    msg->str_idx = 0;
-    msg->str_sz = 38; // 固定長
-  }
-  else {
-    // バイナリで送信 (時刻:4Byte + チャネル:1Byte + id:2Byte + dlc:1Byte + data:8Byte)
-    msg->str[0] = (t >> 24) & 0xFF;
-    msg->str[1] = (t >> 16) & 0xFF;
-    msg->str[2] = (t >> 8)  & 0xFF;
-    msg->str[3] = t & 0xFF;
-    msg->str[4] = ch+1; // 0-3 -> 1-4
-    msg->str[5] = (id >> 8) & 0xFF;
-    msg->str[6] = id & 0xFF;
-    msg->str[7] = dlc;
-    for (int i = 0; i < 8; i++)
-      msg->str[8+i] = data[i];
-    msg->str_idx = 0;
-    msg->str_sz = 16; // 固定長
-  }
-
-  return 1;
-}
-
-BYTE mcp2515_errchk(struct canmsg_t* msg)
-{
-  BYTE i = 0;
-  unsigned long t = time_msec;
-  BYTE eflg1 = mcp2515_readreg(0, EFLG);
-  BYTE eflg2 = mcp2515_readreg(1, EFLG);
-  BYTE eflg3 = mcp2515_readreg(2, EFLG);
-  BYTE eflg4 = mcp2515_readreg(3, EFLG);
-  BYTE rec1  = mcp2515_readreg(0, REC);
-  BYTE rec2  = mcp2515_readreg(1, REC);
-  BYTE rec3  = mcp2515_readreg(2, REC);
-  BYTE rec4  = mcp2515_readreg(3, REC);
-
   // 文字列で送信
   WORD msec = t % 1000;
   BYTE sec  = (t / 1000) % 60;
   BYTE min  = (t / 60000) % 60;
   BYTE hour = (t / 3600000) % 24;
 
+  msg->str[0] = to_ascii[hour / 10];
+  msg->str[1] = to_ascii[hour % 10];
+  msg->str[2] = to_ascii[min / 10];
+  msg->str[3] = to_ascii[min % 10];
+  msg->str[4] = to_ascii[sec / 10];
+  msg->str[5] = to_ascii[sec % 10];
+  msg->str[6] = to_ascii[msec / 100];
+  msg->str[7] = to_ascii[(msec % 100) / 10];
+  msg->str[8] = to_ascii[msec % 10];
+
+  msg->str[9] = to_ascii[ch+1]; // 0-3 -> 1-4
+
+  msg->str[10] = to_ascii[(id >> 8) & 0x0F];
+  msg->str[11] = to_ascii[(id >> 4) & 0x0F];
+  msg->str[12] = to_ascii[(id >> 0) & 0x0F];
+  msg->str[13] = to_ascii[dlc];
+  for (int i = 0; i < 8; i++) {
+    msg->str[14+(i*2)]   = to_ascii[(data[i] >> 4) & 0x0F];
+    msg->str[14+(i*2)+1] = to_ascii[(data[i] >> 0) & 0x0F];
+  }
+  msg->str[30] = '\r';
+  msg->str_idx = 0;
+  msg->str_sz = 31; // 固定長
+}
+
+void mcp2515_errchk(struct canmsg_t* msg)
+{
+  BYTE eflg1 = mcp2515_readreg(0, EFLG);
+  BYTE eflg2 = mcp2515_readreg(1, EFLG);
+  BYTE eflg3 = mcp2515_readreg(2, EFLG);
+  BYTE eflg4 = mcp2515_readreg(3, EFLG);
+  BYTE tec1  = mcp2515_readreg(0, TEC);
+  BYTE tec2  = mcp2515_readreg(1, TEC);
+  BYTE tec3  = mcp2515_readreg(2, TEC);
+  BYTE tec4  = mcp2515_readreg(3, TEC);
+  BYTE rec1  = mcp2515_readreg(0, REC);
+  BYTE rec2  = mcp2515_readreg(1, REC);
+  BYTE rec3  = mcp2515_readreg(2, REC);
+  BYTE rec4  = mcp2515_readreg(3, REC);
+
   msg->str[0]  = 'E';
-  msg->str[1]  = 'R';
-  msg->str[2]  = 'R';
-  msg->str[3]  = 'C';
-  msg->str[4]  = 'H';
-  msg->str[5]  = 'K';
-  msg->str[6]  = '-';
 
   // ch1
-  msg->str[7] = to_ascii[1];
-  msg->str[8] = ':';
-  msg->str[9] = to_ascii[(eflg1 >> 4) & 0x0F];
-  msg->str[10] = to_ascii[(eflg1 >> 0) & 0x0F];
-  msg->str[11] = to_ascii[(rec1  >> 4) & 0x0F];
-  msg->str[12] = to_ascii[(rec1  >> 0) & 0x0F];
-  msg->str[13] = '-';
+  msg->str[1] = to_ascii[(eflg1 >> 4) & 0x0F];
+  msg->str[2] = to_ascii[(eflg1 >> 0) & 0x0F];
+  msg->str[3] = to_ascii[(tec1  >> 4) & 0x0F];
+  msg->str[4] = to_ascii[(tec1  >> 0) & 0x0F];
+  msg->str[5] = to_ascii[(rec1  >> 4) & 0x0F];
+  msg->str[6] = to_ascii[(rec1  >> 0) & 0x0F];
+  msg->str[7] = '-';
 
   // ch2
-  msg->str[14] = to_ascii[2];
-  msg->str[15] = ':';
-  msg->str[16] = to_ascii[(eflg2 >> 4) & 0x0F];
-  msg->str[17] = to_ascii[(eflg2 >> 0) & 0x0F];
-  msg->str[18] = to_ascii[(rec2  >> 4) & 0x0F];
-  msg->str[19] = to_ascii[(rec2  >> 0) & 0x0F];
-  msg->str[20] = '-';
+  msg->str[8]  = to_ascii[(eflg2 >> 4) & 0x0F];
+  msg->str[9]  = to_ascii[(eflg2 >> 0) & 0x0F];
+  msg->str[10] = to_ascii[(tec2  >> 4) & 0x0F];
+  msg->str[11] = to_ascii[(tec2  >> 0) & 0x0F];
+  msg->str[12] = to_ascii[(rec2  >> 4) & 0x0F];
+  msg->str[13] = to_ascii[(rec2  >> 0) & 0x0F];
+  msg->str[14] = '-';
 
   // ch3
-  msg->str[21] = to_ascii[3];
-  msg->str[22] = ':';
-  msg->str[23] = to_ascii[(eflg3 >> 4) & 0x0F];
-  msg->str[24] = to_ascii[(eflg3 >> 0) & 0x0F];
-  msg->str[25] = to_ascii[(rec3  >> 4) & 0x0F];
-  msg->str[26] = to_ascii[(rec3  >> 0) & 0x0F];
-  msg->str[27] = '-';
+  msg->str[15] = to_ascii[(eflg3 >> 4) & 0x0F];
+  msg->str[16] = to_ascii[(eflg3 >> 0) & 0x0F];
+  msg->str[17] = to_ascii[(tec3  >> 4) & 0x0F];
+  msg->str[18] = to_ascii[(tec3  >> 0) & 0x0F];
+  msg->str[19] = to_ascii[(rec3  >> 4) & 0x0F];
+  msg->str[20] = to_ascii[(rec3  >> 0) & 0x0F];
+  msg->str[21] = '-';
 
   // ch4
-  msg->str[28] = to_ascii[4];
-  msg->str[29] = ':';
-  msg->str[30] = to_ascii[(eflg4 >> 4) & 0x0F];
-  msg->str[31] = to_ascii[(eflg4 >> 0) & 0x0F];
-  msg->str[32] = to_ascii[(rec4  >> 4) & 0x0F];
-  msg->str[33] = to_ascii[(rec4  >> 0) & 0x0F];
-  msg->str[34] = '-';
-
-  msg->str[35] = '-';
-  msg->str[36] = '-';
-  msg->str[37] = '\r';
+  msg->str[22] = to_ascii[(eflg4 >> 4) & 0x0F];
+  msg->str[23] = to_ascii[(eflg4 >> 0) & 0x0F];
+  msg->str[24] = to_ascii[(tec4  >> 4) & 0x0F];
+  msg->str[25] = to_ascii[(tec4  >> 0) & 0x0F];
+  msg->str[26] = to_ascii[(rec4  >> 4) & 0x0F];
+  msg->str[27] = to_ascii[(rec4  >> 0) & 0x0F];
+  msg->str[28] = '\r';
 
   msg->str_idx = 0;
-  msg->str_sz = 38; // 固定長
-
-  return 1;
+  msg->str_sz  = 29; // 固定長
 }
 
 BYTE is_received(BYTE ch)
 {
   // 受信割り込みピンを確認 GNDならMCP2515エラーor受信割り込み
-  if (ch == 0)
+  if (ch == 0) // 14番ピン(ch:0)
     return !PORTCbits.RC2; // 14番ピン
-#if 1 // 4ch対応時に有効化する
   else if (ch == 1)
     return !PORTCbits.RC0; // 16番ピン
   else if (ch == 2)
     return !PORTCbits.RC1; // 15番ピン
   else if (ch == 3)
     return !PORTAbits.RA4; // 3番ピン
-#endif
   else
     return 0;
 }
@@ -596,48 +551,35 @@ BYTE gps_parse(struct canmsg_t* msg)
       !(lon_mark == 'E' || lon_mark == 'W'))    // E でも Wでもない
     return 0; // 無効なデータ
 
-  if (mode & MODE_ASCII) {
-    // 文字列で送信
-    WORD msec = t % 1000;
-    BYTE sec  = (t / 1000) % 60;
-    BYTE min  = (t / 60000) % 60;
-    BYTE hour = (t / 3600000) % 24;
+  // 文字列で送信
+  WORD msec = t % 1000;
+  BYTE sec  = (t / 1000) % 60;
+  BYTE min  = (t / 60000) % 60;
+  BYTE hour = (t / 3600000) % 24;
 
-    msg->str[0]  = to_ascii[hour / 10];
-    msg->str[1]  = to_ascii[hour % 10];
-    msg->str[2]  = 'h';
-    msg->str[3]  = to_ascii[min / 10];
-    msg->str[4]  = to_ascii[min % 10];
-    msg->str[5]  = 'm';
-    msg->str[6]  = to_ascii[sec / 10];
-    msg->str[7]  = to_ascii[sec % 10];
-    msg->str[8]  = 's';
-    msg->str[9]  = to_ascii[msec / 100];
-    msg->str[10] = to_ascii[(msec % 100) / 10];
-    msg->str[11] = to_ascii[msec % 10];
-    msg->str[12] = '-';
+  msg->str[0] = to_ascii[hour / 10];
+  msg->str[1] = to_ascii[hour % 10];
+  msg->str[2] = to_ascii[min / 10];
+  msg->str[3] = to_ascii[min % 10];
+  msg->str[4] = to_ascii[sec / 10];
+  msg->str[5] = to_ascii[sec % 10];
+  msg->str[6] = to_ascii[msec / 100];
+  msg->str[7] = to_ascii[(msec % 100) / 10];
+  msg->str[8] = to_ascii[msec % 10];
 
-    // 緯度 (N-3723.2475)
-    msg->str[13] = lat_mark;
-    msg->str[14] = '-';
-    for (int i = 0; i < 9; i++) // 9桁
-      msg->str[15+i] = gpsline[7+i];
-    msg->str[24] = '-';
+  // 緯度 (N-3723.2475)
+  msg->str[9] = lat_mark;
+  for (int i = 0; i < 9; i++) // 9桁
+    msg->str[10+i] = gpsline[7+i];
 
-    // 経度 (E-12158.3416)
-    msg->str[25] = lon_mark;
-    msg->str[26] = '-';
-    for (int i = 0; i < 10; i++) // 10桁
-      msg->str[27+i] = gpsline[19+i];
-    msg->str[37] = '\r';
-    msg->str_idx = 0;
-    msg->str_sz = 38; // 固定長
-    return 1;
-  }
-  else {
-    // バイナリで送信モードは非サポート
-    return 0;
-  }
+  // 経度 (E-12158.3416)
+  msg->str[19] = lon_mark;
+  for (int i = 0; i < 10; i++) // 10桁
+    msg->str[20+i] = gpsline[19+i];
+  msg->str[30] = '\r';
+  msg->str_idx = 0;
+  msg->str_sz  = 31; // 固定長
+  return 1;
 }
 
 void parse_line(char* line)
@@ -648,7 +590,7 @@ void parse_line(char* line)
     mcp2515_modreg(1, CANCTRL, 0xE0, 0x00);
     mcp2515_modreg(2, CANCTRL, 0xE0, 0x00);
     mcp2515_modreg(3, CANCTRL, 0xE0, 0x00);
-    mode = (mode & MODE_DATA) | MODE_NORMAL;
+    mode = MODE_NORMAL;
     LATBbits.LATB5 = 1; // Main-LED点灯
     time_msec = 0;
   }
@@ -658,15 +600,9 @@ void parse_line(char* line)
     mcp2515_modreg(1, CANCTRL, 0xE0, 0x60);
     mcp2515_modreg(2, CANCTRL, 0xE0, 0x60);
     mcp2515_modreg(3, CANCTRL, 0xE0, 0x60);
-    mode = (mode & MODE_DATA) | MODE_LISTEN;
+    mode = MODE_LISTEN;
     LATBbits.LATB5 = 1; // Main-LED点灯
     time_msec = 0;
-  }
-  else if (line[0] == 'A' && mode & MODE_CONFIG) {
-    mode = (mode & MODE_MCP2515) | MODE_ASCII;
-  }
-  else if (line[0] == 'B' && mode & MODE_CONFIG) {
-    mode = (mode & MODE_MCP2515) | MODE_BINARY;
   }
   else if (line[0] == 'C') {
     // 受信停止(コンフィグモードに戻す)
@@ -674,7 +610,7 @@ void parse_line(char* line)
     mcp2515_modreg(1, CANCTRL, 0xE0, 0x80);
     mcp2515_modreg(2, CANCTRL, 0xE0, 0x80);
     mcp2515_modreg(3, CANCTRL, 0xE0, 0x80);
-    mode = (mode & MODE_DATA) | MODE_CONFIG;
+    mode = MODE_CONFIG;
     recv_count = 0;
     recv_idx = 0;
     send_idx = 0;
