@@ -1,42 +1,42 @@
 #include <htc.h>
 #include "usb_cdc.h"
 
-#define USTAT_EP0_OUT 0x00
-#define USTAT_EP0_IN  0x04
-#define USTAT_EP2_IN  0x14
-#define USTAT_EP3_OUT 0x18
-#define USTAT_EP1_IN  0x0C
+#define USTAT_EP0_OUT (0x00)
+#define USTAT_EP0_IN  (0x04)
+#define USTAT_EP2_IN  (0x14)
+#define USTAT_EP3_OUT (0x18)
+#define USTAT_EP1_IN  (0x0C)
 
-#define USB_PID_SETUP 0x0D
+#define USB_PID_SETUP (0x0D)
 
-#define REQUEST_GET_STATUS        0x00
-#define REQUEST_CLEAR_FEATURE     0x01
-#define REQUEST_SET_FEATURE       0x03
-#define REQUEST_SET_ADDRESS       0x05
-#define REQUEST_GET_DESCRIPTOR    0x06
-#define REQUEST_GET_CONFIGURATION 0x08
-#define REQUEST_SET_CONFIGURATION 0x09
-#define REQUEST_GET_INTERFACE     0x0A
-#define REQUEST_SET_INTERFACE     0x11
-#define REQUEST_SYNCH_FRAME       0x12
+#define REQUEST_GET_STATUS        (0x00)
+#define REQUEST_CLEAR_FEATURE     (0x01)
+#define REQUEST_SET_FEATURE       (0x03)
+#define REQUEST_SET_ADDRESS       (0x05)
+#define REQUEST_GET_DESCRIPTOR    (0x06)
+#define REQUEST_GET_CONFIGURATION (0x08)
+#define REQUEST_SET_CONFIGURATION (0x09)
+#define REQUEST_GET_INTERFACE     (0x0A)
+#define REQUEST_SET_INTERFACE     (0x11)
+#define REQUEST_SYNCH_FRAME       (0x12)
 
-#define REQUEST_SEND_ENCAPSULATED_COMMAND 0x00
-#define REQUEST_GET_ENCAPSULATED_RESPONSE 0x01
-#define REQUEST_SET_LINE_CODING           0x20
-#define REQUEST_GET_LINE_CODING           0x21
-#define REQUEST_SET_CONTROL_LINE_STATE    0x22
+#define REQUEST_SEND_ENCAPSULATED_COMMAND (0x00)
+#define REQUEST_GET_ENCAPSULATED_RESPONSE (0x01)
+#define REQUEST_SET_LINE_CODING           (0x20)
+#define REQUEST_GET_LINE_CODING           (0x21)
+#define REQUEST_SET_CONTROL_LINE_STATE    (0x22)
 
-#define DESCR_DEVICE    0x01
-#define DESCR_CONFIG    0x02
-#define DESCR_STRING    0x03
-#define DESCR_INTERFACE 0x04
-#define DESCR_ENDPOINT  0x05
+#define DESCR_DEVICE    (0x01)
+#define DESCR_CONFIG    (0x02)
+#define DESCR_STRING    (0x03)
+#define DESCR_INTERFACE (0x04)
+#define DESCR_ENDPOINT  (0x05)
 
-#define USB_DEV_DESC_SERIALNUMBER_OFFSET 16
-#define USB_STRING_SERIALNUMBER_INDEX     3
-#define USB_STRING_SERIALNUMBER_SIZE     18
+#define USB_DEV_DESC_SERIALNUMBER_OFFSET (16)
+#define USB_STRING_SERIALNUMBER_INDEX     (3)
+#define USB_STRING_SERIALNUMBER_SIZE     (18)
 
-#define EP_BUFFERSIZE_BULK 0x40
+#define EP_BUFFERSIZE_BULK (0x40)
 
 typedef struct
 {
@@ -46,133 +46,133 @@ typedef struct
   unsigned char adrh;
 } BDT;
 
-#define EPBD_NROF 12
+#define EPBD_NROF (12)
 
 // datasheet table 22-2 page 264 Mode 3
-#define EPBD_EP0_OUT       0
-#define EPBD_EP0_IN        1
-#define EPBD_EP1_IN_EVEN   4
-#define EPBD_EP1_IN_ODD    5
-#define EPBD_EP2_IN_EVEN   8
-#define EPBD_EP2_IN_ODD    9
-#define EPBD_EP3_OUT_EVEN 10
-#define EPBD_EP3_OUT_ODD  11
+#define EPBD_EP0_OUT       (0)
+#define EPBD_EP0_IN        (1)
+#define EPBD_EP1_IN_EVEN   (4)
+#define EPBD_EP1_IN_ODD    (5)
+#define EPBD_EP2_IN_EVEN   (8)
+#define EPBD_EP2_IN_ODD    (9)
+#define EPBD_EP3_OUT_EVEN (10)
+#define EPBD_EP3_OUT_ODD  (11)
 
-#define EVEN 0
-#define ODD  1
+#define EVEN (0)
+#define ODD  (1)
 
-/* USB request type values */
-#define USBRQ_TYPE_MASK         0x60
+// USB request type values
+#define USBRQ_TYPE_MASK         (0x60)
 #define USBRQ_TYPE_STANDARD     (0<<5)
 #define USBRQ_TYPE_CLASS        (1<<5)
 #define USBRQ_TYPE_VENDOR       (2<<5)
 
-#define USBRQ_RECIPIENT_MASK      0x1f
-#define USBRQ_RECIPIENT_DEVICE    0x00
-#define USBRQ_RECIPIENT_INTERFACE 0x01
-#define USBRQ_RECIPIENT_ENDPOINT  0x02
-#define USBRQ_RECIPIENT_OTHER     0x03
+#define USBRQ_RECIPIENT_MASK      (0x1f)
+#define USBRQ_RECIPIENT_DEVICE    (0x00)
+#define USBRQ_RECIPIENT_INTERFACE (0x01)
+#define USBRQ_RECIPIENT_ENDPOINT  (0x02)
+#define USBRQ_RECIPIENT_OTHER     (0x03)
 
 const unsigned char usb_dev_desc[] = {
-	18,
-	0x01,
-	0x00, 0x02,
-	0x02, // Class code
-	0x00,
-	0x00,
-	0x08, // max packet size
-	0xd8, 0x04, // vendor
-	0x0a, 0x00, // product
-	0x00, 0x01, // device release
-	0x01, // manuf string
-	0x02, // product string
-	0x00, // serial number string (if number available, index 3 is set on the fly)
-	0x01
+  18,
+  0x01,
+  0x00, 0x02,
+  0x02, // Class code
+  0x00,
+  0x00,
+  0x08, // max packet size
+  0xd8, 0x04, // vendor
+  0x0a, 0x00, // product
+  0x00, 0x01, // device release
+  0x01, // manuf string
+  0x02, // product string
+  0x00, // serial number string (if number available, index 3 is set on the fly)
+  0x01
 };
 
 const unsigned char usb_config_desc[] = {
-/*Configuation Descriptor*/
-  0x09,                /* bLength: Configuation Descriptor size */
-  DESCR_CONFIG,        /* bDescriptorType: Configuration */
-  9+9+5+5+4+5+7+9+7+7, /* wTotalLength:no of returned bytes */
+  // Configuation Descriptor
+  0x09,                // bLength: Configuation Descriptor size
+  DESCR_CONFIG,        // bDescriptorType: Configuration
+  9+9+5+5+4+5+7+9+7+7, // wTotalLength:no of returned bytes
   0x00,
-  0x02,   /* bNumInterfaces: 2 interface */
-  0x01,   /* bConfigurationValue: Configuration value */
-  0x00,   /* iConfiguration: Index of string descriptor describing the configuration */
-  0x80,   /* bmAttributes: bus powered */
-  50,     /* MaxPower 100 mA */
-/*Interface Descriptor*/
-  0x09,   /* bLength: Interface Descriptor size */
-  DESCR_INTERFACE,  /* bDescriptorType: Interface */
-                    /* Interface descriptor type */
-  0x00,   /* bInterfaceNumber: Number of Interface */
-  0x00,   /* bAlternateSetting: Alternate setting */
-  0x01,   /* bNumEndpoints: One endpoints used */
-  0x02,   /* bInterfaceClass: Communication Interface Class */
-  0x02,   /* bInterfaceSubClass: Abstract Control Model */
-  0x01,   /* bInterfaceProtocol: Common AT commands */
-  0x00,   /* iInterface: */
-/*Header Functional Descriptor*/
-  0x05,   /* bLength: Endpoint Descriptor size */
-  0x24,   /* bDescriptorType: CS_INTERFACE */
-  0x00,   /* bDescriptorSubtype: Header Func Desc */
-  0x10,   /* bcdCDC: spec release number */
+  0x02,                // bNumInterfaces: 2 interface
+  0x01,                // bConfigurationValue: Configuration value
+  0x00,                // iConfiguration: Index of string descriptor describing the configuration
+  0x80,                // bmAttributes: bus powered
+  50,                  // MaxPower 100 mA
+  // Interface Descriptor
+  0x09,                // bLength: Interface Descriptor size
+  DESCR_INTERFACE,     // bDescriptorType: Interface
+                       // Interface descriptor type
+  0x00,                // bInterfaceNumber: Number of Interface
+  0x00,                // bAlternateSetting: Alternate setting
+  0x01,                // bNumEndpoints: One endpoints used
+  0x02,                // bInterfaceClass: Communication Interface Class
+  0x02,                // bInterfaceSubClass: Abstract Control Model
+  0x01,                // bInterfaceProtocol: Common AT commands
+  0x00,                // iInterface:
+  // Header Functional Descriptor
+  0x05,                // bLength: Endpoint Descriptor size
+  0x24,                // bDescriptorType: CS_INTERFACE
+  0x00,                // bDescriptorSubtype: Header Func Desc
+  0x10,                // bcdCDC: spec release number
   0x01,
 
-/*ACM Functional Descriptor*/
-  0x04,   /* bFunctionLength */
-  0x24,   /* bDescriptorType: CS_INTERFACE */
-  0x02,   /* bDescriptorSubtype: Abstract Control Management desc */
-  0x02,   /* bmCapabilities */
+  // ACM Functional Descriptor
+  0x04,                // bFunctionLength
+  0x24,                // bDescriptorType: CS_INTERFACE
+  0x02,                // bDescriptorSubtype: Abstract Control Management desc
+  0x02,                // bmCapabilities
 
-/*Union Functional Descriptor*/
-  0x05,   /* bFunctionLength */
-  0x24,   /* bDescriptorType: CS_INTERFACE */
-  0x06,   /* bDescriptorSubtype: Union func desc */
-  0x00,   /* bMasterInterface: Communication class interface */
-  0x01,   /* bSlaveInterface0: Data Class Interface */
+  // Union Functional Descriptor
+  0x05,                // bFunctionLength
+  0x24,                // bDescriptorType: CS_INTERFACE
+  0x06,                // bDescriptorSubtype: Union func desc
+  0x00,                // bMasterInterface: Communication class interface
+  0x01,                // bSlaveInterface0: Data Class Interface
 
-/*Call Managment Functional Descriptor*/
-  0x05,   /* bFunctionLength */
-  0x24,   /* bDescriptorType: CS_INTERFACE */
-  0x01,   /* bDescriptorSubtype: Call Management Func Desc */
-  0x00,   /* bmCapabilities: D0+D1 */
-  0x01,   /* bDataInterface: 1 */
+  // Call Managment Functional Descriptor
+  0x05,                // bFunctionLength
+  0x24,                // bDescriptorType: CS_INTERFACE
+  0x01,                // bDescriptorSubtype: Call Management Func Desc
+  0x00,                // bmCapabilities: D0+D1
+  0x01,                // bDataInterface: 1
 
-/*Endpoint 2 Descriptor*/
-  0x07,   /* bLength: Endpoint Descriptor size */
-  DESCR_ENDPOINT,   /* bDescriptorType: Endpoint */
-  0x82,   /* bEndpointAddress: (IN2) */
-  0x03,   /* bmAttributes: Interrupt */
-  0x08,   /* wMaxPacketSize: ???????????????????? */
+  // Endpoint 2 Descriptor
+  0x07,                // bLength: Endpoint Descriptor size
+  DESCR_ENDPOINT,      // bDescriptorType: Endpoint
+  0x82,                // bEndpointAddress: (IN2)
+  0x03,                // bmAttributes: Interrupt
+  0x08,                // wMaxPacketSize: ????????????????????
   0x00,
-  0x02,   /* bInterval: */
-/*Data class interface descriptor*/
-  0x09,   /* bLength: Endpoint Descriptor size */
-  DESCR_INTERFACE,  /* bDescriptorType: */
-  0x01,   /* bInterfaceNumber: Number of Interface */
-  0x00,   /* bAlternateSetting: Alternate setting */
-  0x02,   /* bNumEndpoints: Two endpoints used */
-  0x0A,   /* bInterfaceClass: CDC */
-  0x00,   /* bInterfaceSubClass: */
-  0x00,   /* bInterfaceProtocol: */
-  0x00,   /* iInterface: */
-/*Endpoint 3 Descriptor*/
-  0x07,   /* bLength: Endpoint Descriptor size */
-  DESCR_ENDPOINT,   /* bDescriptorType: Endpoint */
-  0x03,   /* bEndpointAddress: (OUT3) */
-  0x02,   /* bmAttributes: Bulk */
-  0x08,   /* wMaxPacketSize: */
+  0x02,                // bInterval:
+  // Data class interface descriptor
+  0x09,                // bLength: Endpoint Descriptor size
+  DESCR_INTERFACE,     // bDescriptorType:
+  0x01,                // bInterfaceNumber: Number of Interface
+  0x00,                // bAlternateSetting: Alternate setting
+  0x02,                // bNumEndpoints: Two endpoints used
+  0x0A,                // bInterfaceClass: CDC
+  0x00,                // bInterfaceSubClass:
+  0x00,                // bInterfaceProtocol:
+  0x00,                // iInterface:
+  // Endpoint 3 Descriptor
+  0x07,                // bLength: Endpoint Descriptor size
+  DESCR_ENDPOINT,      // bDescriptorType: Endpoint
+  0x03,                // bEndpointAddress: (OUT3)
+  0x02,                // bmAttributes: Bulk
+  0x08,                // wMaxPacketSize:
   0x00,
-  0x00,   /* bInterval: ignore for Bulk transfer */
-/*Endpoint 1 Descriptor*/
-  0x07,   /* bLength: Endpoint Descriptor size */
-  DESCR_ENDPOINT,   /* bDescriptorType: Endpoint */
-  0x81,   /* bEndpointAddress: (IN1) */
-  0x02,   /* bmAttributes: Bulk */
-  EP_BUFFERSIZE_BULK,  /* wMaxPacketSize: */
+  0x00,                // bInterval: ignore for Bulk transfer
+  // Endpoint 1 Descriptor
+  0x07,                // bLength: Endpoint Descriptor size
+  DESCR_ENDPOINT,      // bDescriptorType: Endpoint
+  0x81,                // bEndpointAddress: (IN1)
+  0x02,                // bmAttributes: Bulk
+  EP_BUFFERSIZE_BULK,  // wMaxPacketSize:
   0x00,
-  0x00    /* bInterval: ignore for Bulk transfer */
+  0x00                 // bInterval: ignore for Bulk transfer
 };
 
 const unsigned char usb_string_0[] = {
@@ -182,34 +182,34 @@ const unsigned char usb_string_0[] = {
 };
 
 const unsigned char usb_string_manuf[] = {
-	0x36,
-	0x03,	// type
-	'M', 0x00,
-	'i', 0x00,
-	'c', 0x00,
-	'r', 0x00,
-	'o', 0x00,
-	'c', 0x00,
-	'h', 0x00,
-	'i', 0x00,
-	'p', 0x00,
-	' ', 0x00,
-	'T', 0x00,
-	'e', 0x00,
-	'c', 0x00,
-	'h', 0x00,
-	'n', 0x00,
-	'o', 0x00,
-	'l', 0x00,
-	'o', 0x00,
-	'g', 0x00,
-	'y', 0x00,
-	',', 0x00,
-	' ', 0x00,
-	'I', 0x00,
-	'n', 0x00,
-	'c', 0x00,
-	'.', 0x00
+  0x36,
+  0x03,  // type
+  'M', 0x00,
+  'i', 0x00,
+  'c', 0x00,
+  'r', 0x00,
+  'o', 0x00,
+  'c', 0x00,
+  'h', 0x00,
+  'i', 0x00,
+  'p', 0x00,
+  ' ', 0x00,
+  'T', 0x00,
+  'e', 0x00,
+  'c', 0x00,
+  'h', 0x00,
+  'n', 0x00,
+  'o', 0x00,
+  'l', 0x00,
+  'o', 0x00,
+  'g', 0x00,
+  'y', 0x00,
+  ',', 0x00,
+  ' ', 0x00,
+  'I', 0x00,
+  'n', 0x00,
+  'c', 0x00,
+  '.', 0x00
 };
 
 const unsigned char usb_string_product[] = {
@@ -510,35 +510,35 @@ void usb_process()
         epbd[EPBD_EP0_IN].stat = 0;
         epbd[EPBD_EP0_IN].stat = 0;
 
-			  if ((ep0out_buffer[0] & USBRQ_TYPE_MASK) == USBRQ_TYPE_STANDARD) {
+        if ((ep0out_buffer[0] & USBRQ_TYPE_MASK) == USBRQ_TYPE_STANDARD) {
           switch (ep0out_buffer[1]) {
-		      case REQUEST_GET_DESCRIPTOR:
-		        if (!usb_handleDescriptorRequest(ep0out_buffer[3], ep0out_buffer[2] , (ep0out_buffer[7] << 8) | ep0out_buffer[6])) {
+          case REQUEST_GET_DESCRIPTOR:
+            if (!usb_handleDescriptorRequest(ep0out_buffer[3], ep0out_buffer[2] , (ep0out_buffer[7] << 8) | ep0out_buffer[6])) {
               epbd[EPBD_EP0_IN].cnt = 0;
-		          epbd[EPBD_EP0_IN].stat = 0xCC; // Stall
+              epbd[EPBD_EP0_IN].stat = 0xCC; // Stall
             }
-		        break;
+            break;
 
-		      case REQUEST_SET_ADDRESS:
-		        usb_setaddress = ep0out_buffer[2];
-		        epbd[EPBD_EP0_IN].cnt = 0;
-		        epbd[EPBD_EP0_IN].stat = 0xC8;
-		        break;
+          case REQUEST_SET_ADDRESS:
+            usb_setaddress = ep0out_buffer[2];
+            epbd[EPBD_EP0_IN].cnt = 0;
+            epbd[EPBD_EP0_IN].stat = 0xC8;
+            break;
 
-		      case REQUEST_SET_CONFIGURATION:
-		        usb_config = ep0out_buffer[2];
+          case REQUEST_SET_CONFIGURATION:
+            usb_config = ep0out_buffer[2];
             configured = 1;
-		        epbd[EPBD_EP0_IN].cnt = 0;
-		        epbd[EPBD_EP0_IN].stat = 0xC8;
-		        break;
+            epbd[EPBD_EP0_IN].cnt = 0;
+            epbd[EPBD_EP0_IN].stat = 0xC8;
+            break;
 
           case REQUEST_GET_CONFIGURATION:
-		        ep0in_buffer[0] = usb_config;
-		        epbd[EPBD_EP0_IN].cnt = 1;
+            ep0in_buffer[0] = usb_config;
+            epbd[EPBD_EP0_IN].cnt = 1;
             epbd[EPBD_EP0_IN].stat = 0xC8;
-		        break;
+            break;
 
-		      case REQUEST_GET_INTERFACE:
+          case REQUEST_GET_INTERFACE:
             ep0in_buffer[0] = 0;
             epbd[EPBD_EP0_IN].cnt = 1;
             epbd[EPBD_EP0_IN].stat = 0xC8;
