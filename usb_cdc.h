@@ -1,22 +1,3 @@
-/********************************************************************
- File: usb_cdc.h
-
- Description:
- This file contains the USB CDC definitions.
-
- Authors and Copyright:
- (c) 2012-2016, Thomas Fischl <tfischl@gmx.de>
-
- Device: PIC18F14K50
- Compiler: Microchip MPLAB XC8 C Compiler V1.34
-
- License:
- This file is open source. You can use it or parts of it in own
- open source projects. For closed or commercial projects you have to
- contact the authors listed above to get the permission for using
- this source code.
-
- ********************************************************************/
 #ifndef _USB_CDC_
 #define _USB_CDC_
 

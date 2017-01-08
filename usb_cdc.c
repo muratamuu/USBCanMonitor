@@ -1,25 +1,5 @@
-/********************************************************************
- File: usb_cdc.c
-
- Description:
- This file contains the USB CDC functions.
-
- Authors and Copyright:
- (c) 2012-2016, Thomas Fischl <tfischl@gmx.de>
-
- Device: PIC18F14K50
- Compiler: Microchip MPLAB XC8 C Compiler V1.34
-
- License:
- This file is open source. You can use it or parts of it in own
- open source projects. For closed or commercial projects you have to
- contact the authors listed above to get the permission for using
- this source code.
-
- ********************************************************************/
 #include <htc.h>
 #include "usb_cdc.h"
-
 
 #define USTAT_EP0_OUT 0x00
 #define USTAT_EP0_IN 0x04
@@ -64,7 +44,7 @@ typedef struct
     unsigned char cnt;
     unsigned char adrl;
     unsigned char adrh;
-} BDT;     
+} BDT;
 
 #define EPBD_NROF 12
 
@@ -78,11 +58,8 @@ typedef struct
 #define EPBD_EP3_OUT_EVEN 10
 #define EPBD_EP3_OUT_ODD 11
 
-
 #define EVEN 0
 #define ODD 1
-
-
 
 /* USB request type values */
 #define USBRQ_TYPE_MASK         0x60
@@ -99,10 +76,10 @@ typedef struct
 const unsigned char usb_dev_desc[] = {
 	18,
 	0x01,
-	0x00, 0x02,	
+	0x00, 0x02,
 	0x02, // Class code
-	0x00,	
-	0x00,	
+	0x00,
+	0x00,
 	0x08, // max packet size
 	0xd8, 0x04, // vendor
 	0x0a, 0x00, // product
@@ -206,33 +183,33 @@ const unsigned char usb_string_0[] = {
 };
 
 const unsigned char usb_string_manuf[] = {
-	0x36,	
+	0x36,
 	0x03,	// type
-	'M', 0x00, 
-	'i', 0x00, 
-	'c', 0x00, 
-	'r', 0x00, 
-	'o', 0x00, 
-	'c', 0x00, 
-	'h', 0x00, 
-	'i', 0x00, 
-	'p', 0x00, 
+	'M', 0x00,
+	'i', 0x00,
+	'c', 0x00,
+	'r', 0x00,
+	'o', 0x00,
+	'c', 0x00,
+	'h', 0x00,
+	'i', 0x00,
+	'p', 0x00,
 	' ', 0x00,
-	'T', 0x00, 
-	'e', 0x00, 
-	'c', 0x00, 
-	'h', 0x00, 
-	'n', 0x00, 
-	'o', 0x00, 
-	'l', 0x00, 
-	'o', 0x00, 
-	'g', 0x00, 
-	'y', 0x00, 
-	',', 0x00, 
+	'T', 0x00,
+	'e', 0x00,
+	'c', 0x00,
+	'h', 0x00,
+	'n', 0x00,
+	'o', 0x00,
+	'l', 0x00,
+	'o', 0x00,
+	'g', 0x00,
+	'y', 0x00,
+	',', 0x00,
 	' ', 0x00,
-	'I', 0x00, 
-	'n', 0x00, 
-	'c', 0x00, 
+	'I', 0x00,
+	'n', 0x00,
+	'c', 0x00,
 	'.', 0x00
 };
 
@@ -288,8 +265,8 @@ unsigned char usb_serialNumberAvailable() {
  */
 void usb_sendProcess() {
     if (usb_sendleft == 0) return;
-    
-    unsigned short length = usb_sendleft; 
+
+    unsigned short length = usb_sendleft;
     if (length > EP_BUFFERSIZE)
         length = EP_BUFFERSIZE;
 
@@ -307,7 +284,7 @@ void usb_sendProcess() {
     if (epbd[EPBD_EP0_IN].stat & 0x40)
         epbd[EPBD_EP0_IN].stat = 0x88;
     else
-        epbd[EPBD_EP0_IN].stat = 0xC8;    
+        epbd[EPBD_EP0_IN].stat = 0xC8;
 }
 
 /**
@@ -348,9 +325,9 @@ unsigned char usb_handleDescriptorRequest(unsigned char type, unsigned char inde
         case DESCR_STRING:
             switch (index) {
                 case 0: return usb_loadDescriptor(usb_string_0, sizeof(usb_string_0), length);
-                case 1: return usb_loadDescriptor(usb_string_manuf, sizeof(usb_string_manuf), length);            
-                case 2: return usb_loadDescriptor(usb_string_product, sizeof(usb_string_product), length);            
-                case 3: return usb_loadDescriptor(usb_string_serial, USB_STRING_SERIALNUMBER_SIZE, length);            
+                case 1: return usb_loadDescriptor(usb_string_manuf, sizeof(usb_string_manuf), length);
+                case 2: return usb_loadDescriptor(usb_string_product, sizeof(usb_string_product), length);
+                case 3: return usb_loadDescriptor(usb_string_serial, USB_STRING_SERIALNUMBER_SIZE, length);
             }
     }
 
@@ -377,14 +354,14 @@ void usb_ep1_flush() {
 
     epbd[EPBD_EP1_IN_EVEN + current_ep1_buffer].cnt = txbuffer_writepos;
     txbuffer_writepos = 0;
-    
+
     if (current_ep1_buffer == EVEN) {
         epbd[EPBD_EP1_IN_EVEN].stat = 0xC8;
         current_ep1_buffer = ODD;
     } else {
         epbd[EPBD_EP1_IN_ODD].stat = 0x88;
         current_ep1_buffer = EVEN;
-    }    
+    }
 }
 
 /**
@@ -395,14 +372,14 @@ void usb_ep1_flush() {
 unsigned char usb_putch(unsigned char ch) {
 
     if (epbd[EPBD_EP1_IN_EVEN + current_ep1_buffer].stat & 0x80) {
-        // overflow! TODO: signal overflow (->errorflags?)        
+        // overflow! TODO: signal overflow (->errorflags?)
         return ch;
     }
-    
+
     ep1in_buffer[current_ep1_buffer][txbuffer_writepos] = ch;
-    
+
     nosend_counter = 0;
-    
+
     txbuffer_writepos++;
     if (txbuffer_writepos == EP_BUFFERSIZE_BULK) {
         usb_ep1_flush();
@@ -446,7 +423,7 @@ unsigned char usb_getch() {
         epbd[EPBD_EP3_OUT_EVEN + current_ep3_buffer].cnt = EP_BUFFERSIZE;
         epbd[EPBD_EP3_OUT_EVEN + current_ep3_buffer].stat = 0x80;
         usb_getchpos = 0;
-        
+
         current_ep3_buffer = !current_ep3_buffer;
     }
     return ch;
@@ -456,7 +433,7 @@ unsigned char usb_getch() {
  * Initialize USB module
  */
 void usb_init() {
-    
+
     epbd[EPBD_EP0_OUT].stat = 0x80;
     epbd[EPBD_EP0_OUT].cnt = EP_BUFFERSIZE;
     epbd[EPBD_EP0_OUT].adrl = 0x30;
@@ -467,7 +444,7 @@ void usb_init() {
     epbd[EPBD_EP0_IN].adrl = 0x38;
     epbd[EPBD_EP0_IN].adrh = 0x02;
 
-    
+
     epbd[EPBD_EP1_IN_EVEN].stat = 0x00;
     epbd[EPBD_EP1_IN_EVEN].cnt = EP_BUFFERSIZE_BULK;
     epbd[EPBD_EP1_IN_EVEN].adrl = 0x60;
@@ -478,18 +455,18 @@ void usb_init() {
     epbd[EPBD_EP1_IN_ODD].adrl = 0xA0;
     epbd[EPBD_EP1_IN_ODD].adrh = 0x02;
 
-    
+
     epbd[EPBD_EP2_IN_EVEN].stat = 0x00;
     epbd[EPBD_EP2_IN_EVEN].cnt = EP_BUFFERSIZE;
     epbd[EPBD_EP2_IN_EVEN].adrl = 0x40;
     epbd[EPBD_EP2_IN_EVEN].adrh = 0x02;
-    
+
     epbd[EPBD_EP2_IN_ODD].stat = 0x40;
     epbd[EPBD_EP2_IN_ODD].cnt = EP_BUFFERSIZE;
     epbd[EPBD_EP2_IN_ODD].adrl = 0x48;
     epbd[EPBD_EP2_IN_ODD].adrh = 0x02;
 
-    
+
     epbd[EPBD_EP3_OUT_EVEN].stat = 0x80;
     epbd[EPBD_EP3_OUT_EVEN].cnt = EP_BUFFERSIZE;
     epbd[EPBD_EP3_OUT_EVEN].adrl = 0x50;
@@ -499,8 +476,8 @@ void usb_init() {
     epbd[EPBD_EP3_OUT_ODD].cnt = EP_BUFFERSIZE;
     epbd[EPBD_EP3_OUT_ODD].adrl = 0x58;
     epbd[EPBD_EP3_OUT_ODD].adrh = 0x02;
-    
-    
+
+
     UEP0 = 0x16;
     UEP1 = 0x1A;
     UEP2 = 0x1A;
@@ -515,7 +492,7 @@ void usb_init() {
  * Do USB processing
  */
 void usb_process() {
-       
+
     // auto flush after some idle time
     if (nosend_counter++ > 200) {
         usb_ep1_flush();
@@ -543,7 +520,7 @@ void usb_process() {
 		                            epbd[EPBD_EP0_IN].stat = 0xCC; // Stall
                                         }
 		                        break;
-                                
+
 		                    case REQUEST_SET_ADDRESS:
 
 		                        usb_setaddress = ep0out_buffer[2];
@@ -551,7 +528,7 @@ void usb_process() {
 		                        epbd[EPBD_EP0_IN].cnt = 0;
 		                        epbd[EPBD_EP0_IN].stat = 0xC8;
 		                        break;
-                                
+
 		                    case REQUEST_SET_CONFIGURATION:
 
 		                        usb_config = ep0out_buffer[2];
@@ -563,17 +540,17 @@ void usb_process() {
 		                    case REQUEST_GET_CONFIGURATION:
 
 		                        ep0in_buffer[0] = usb_config;
-		                        epbd[EPBD_EP0_IN].cnt = 1;                         
-                                epbd[EPBD_EP0_IN].stat = 0xC8;    
+		                        epbd[EPBD_EP0_IN].cnt = 1;
+                                epbd[EPBD_EP0_IN].stat = 0xC8;
 		                        break;
 
 		                    case REQUEST_GET_INTERFACE:
 
 		                        ep0in_buffer[0] = 0;
-		                        epbd[EPBD_EP0_IN].cnt = 1;                         
-                                epbd[EPBD_EP0_IN].stat = 0xC8;    
+		                        epbd[EPBD_EP0_IN].cnt = 1;
+                                epbd[EPBD_EP0_IN].stat = 0xC8;
 		                        break;
-                                
+
                             case REQUEST_GET_STATUS:
                                 if ((ep0out_buffer[0] & USBRQ_RECIPIENT_MASK) == USBRQ_RECIPIENT_ENDPOINT) {
                                     ep0in_buffer[0] = usb_ep0status[0];
@@ -585,7 +562,7 @@ void usb_process() {
                                 epbd[EPBD_EP0_IN].cnt = 2;
 		                        epbd[EPBD_EP0_IN].stat = 0xC8;
                                 break;
-                                
+
                             case REQUEST_SET_FEATURE:
                                 if ((ep0out_buffer[0] & USBRQ_RECIPIENT_MASK) == USBRQ_RECIPIENT_ENDPOINT) {
                                     if (ep0out_buffer[2] == 0x00) // HALT
@@ -593,16 +570,16 @@ void usb_process() {
                                 }
                                 epbd[EPBD_EP0_IN].cnt = 0;
 		                        epbd[EPBD_EP0_IN].stat = 0xC8;
-		                        break;                                
-                                
+		                        break;
+
                             case REQUEST_CLEAR_FEATURE:
                                 if ((ep0out_buffer[0] & USBRQ_RECIPIENT_MASK) == USBRQ_RECIPIENT_ENDPOINT) {
-                                    usb_ep0status[0] = 0;                                    
+                                    usb_ep0status[0] = 0;
                                 }
                                 epbd[EPBD_EP0_IN].cnt = 0;
 		                        epbd[EPBD_EP0_IN].stat = 0xC8;
-		                        break;                                
-                                
+		                        break;
+
                             case REQUEST_SYNCH_FRAME:
                                 ep0in_buffer[0] = 0;
                                 ep0in_buffer[1] = 0;
@@ -614,20 +591,20 @@ void usb_process() {
                                 epbd[EPBD_EP0_IN].cnt = 0;
 		                        epbd[EPBD_EP0_IN].stat = 0xC8;
 		                        break;
-		                    default:		                                       
+		                    default:
 		                        epbd[EPBD_EP0_IN].cnt = 0;
 		                        epbd[EPBD_EP0_IN].stat = 0xCC; // stall
 		                        break;
-		                        
+
 		                }
 			} else if ((ep0out_buffer[0] & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS) {
                                 switch (ep0out_buffer[1]) {
-		                    
+
                                     case REQUEST_GET_ENCAPSULATED_RESPONSE:
                                         {unsigned char i; for (i=0; i<8; i++) {ep0in_buffer[i] = 0;}};
 		                        epbd[EPBD_EP0_IN].cnt = 8;
 		                        epbd[EPBD_EP0_IN].stat = 0xC8;
-                                        break;                          
+                                        break;
 
 				    case REQUEST_SET_LINE_CODING:
                                         dolinecoding = 1;
@@ -681,7 +658,7 @@ void usb_process() {
                     UADDR = usb_setaddress;
                     usb_setaddress = 0;
                 }
-               
+
                 usb_sendProcess();
 
             }
