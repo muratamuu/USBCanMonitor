@@ -183,7 +183,7 @@ void main(void)
   usb_init();
 
   // タイマー初期化(10msに1回割り込みを発生させる)
-  TMR0 = -7500;
+  TMR0 = -750;
   T0CON = 0x83;          // 1 / 16 prescalse
   INTCONbits.GIE    = 1; // 割り込み許可
   INTCONbits.TMR0IE = 1; // タイマ0割り込み許可
@@ -695,8 +695,8 @@ void interrupt isr()
 {
   if (INTCONbits.TMR0IF) {
     // 10msec毎に割り込み発生
-    TMR0 = -7500;
+    TMR0 = -750;
     INTCONbits.TMR0IF = 0;
-    time_msec += 10;
+    time_msec += 1;
   }
 }
