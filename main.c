@@ -210,14 +210,14 @@ void main(void)
       recv_idx = (recv_idx + 1) % MSG_MAX;
       mode &= ~MODE_ERRCHK;
     }
-    // ピーク受信カウンタチェックコマンド処理
+    // ピーク受信カウンタチェックコマンド処理 (P)
     if ((mode & MODE_PCNTCHK) && recv_count < MSG_MAX) {
       mcp2515_cntchk(&msgbuffer[recv_idx], peek_recv_count);
       recv_count++;
       recv_idx = (recv_idx + 1) % MSG_MAX;
       mode &= ~MODE_PCNTCHK;
     }
-    // 最大受信カウンタチェックコマンド処理
+    // 最大受信カウンタチェックコマンド処理 (M)
     if ((mode & MODE_MCNTCHK) && recv_count < MSG_MAX) {
       mcp2515_cntchk(&msgbuffer[recv_idx], max_recv_count);
       recv_count++;
@@ -231,13 +231,11 @@ void main(void)
         BYTE reason = mcp2515_readreg(ch, CANINTF);
 
         if (reason & 0x20) { // エラー割り込み
-          if (mcp2515_readreg(ch, EFLG) & 0x80) { // MCP2515受信RXB1オーバーフロー
-            mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
-            mcp2515_modreg(ch, EFLG, 0x80, 0x00);
-          }
+          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20); // MCP2515の10番ピン点灯
           mcp2515_modreg(ch, CANINTF, 0x20, 0x00); // エラーフラグを落とす
+        } else {
+          mcp2515_modreg(ch, BFPCTRL, 0x20, 0x00); // MCP2515の10番ピン消灯
         }
-
         if (reason & 0x01 && recv_count < MSG_MAX) { // RXB0受信割り込み
           mcp2515_recv(ch, SPI_RXB0_READ, &msgbuffer[recv_idx]);
           recv_count++;
@@ -353,8 +351,8 @@ void mcp2515_init(BYTE ch)
   // クロック出力 Fosc/2 24MHz/2=12MHz
   mcp2515_writereg(ch, CANCTRL, 0x85);
   // RXB0,RXB1でフィルタマスクを使用しない(ダブルバッファON)
-  /* mcp2515_modreg(ch, RXB0CTRL, 0x64, 0x64); */
-  /* mcp2515_modreg(ch, RXB1CTRL, 0x60, 0x60); */
+  //mcp2515_modreg(ch, RXB0CTRL, 0x64, 0x64);
+  //mcp2515_modreg(ch, RXB1CTRL, 0x60, 0x60);
   mcp2515_writereg(ch, RXB0CTRL, 0x04);
   mcp2515_writereg(ch, RXB1CTRL, 0x00);
   // フィルタマスク初期化(一切フィルタしない設定)
