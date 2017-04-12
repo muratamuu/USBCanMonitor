@@ -10,6 +10,12 @@
 #define SPI_REG_READ    (0x03) // レジスタ読み込み
 #define SPI_REG_WRITE   (0x02) // レジスタ書き込み
 #define SPI_BIT_MOD     (0x05) // レジスタビット変更
+#define SPI_TXB0_LOAD   (0x40) // 送信バッファ0書き込み
+#define SPI_TXB1_LOAD   (0x42) // 送信バッファ1書き込み
+#define SPI_TXB2_LOAD   (0x44) // 送信バッファ2書き込み
+#define SPI_TXB0_RTS    (0x81) // 送信バッファ0送信要求
+#define SPI_TXB1_RTS    (0x82) // 送信バッファ1送信要求
+#define SPI_TXB2_RTS    (0x84) // 送信バッファ2送信要求
 #define SPI_RXB0_READ   (0x90) // 受信バッファ0読み込み
 #define SPI_RXB1_READ   (0x94) // 受信バッファ1読み込み
 #define SPI_STAT_READ   (0xA0) // 状態読み込み
@@ -69,16 +75,23 @@ unsigned long time_msec;
 // CANメッセージ構造体
 #define MSG_STR_MAX (31) // 24595999917FF81122334455667788 (30+1)
                          // 000000000N0000.0000E00000.0000 (30+1)
-struct canmsg_t
+struct msgstr_t
 {
   char str[MSG_STR_MAX];
   BYTE str_idx;
   BYTE str_sz;
 };
 
+struct canmsg_t
+{
+  WORD id;
+  BYTE dlc;
+  BYTE data[8];
+};
+
 // CANメッセージバッファ
-#define MSG_MAX (10)
-struct canmsg_t msgbuffer[MSG_MAX];
+#define MSG_MAX (6)
+struct msgstr_t msgbuffer[MSG_MAX];
 
 BYTE peek_recv_count = 0;
 unsigned long max_recv_count = 0;
@@ -121,12 +134,14 @@ void mcp2515_bitrate_allch(BYTE cnf1, BYTE cnf2, BYTE cnf3);
 void mcp2515_writereg(BYTE ch, BYTE addr, BYTE data);
 BYTE mcp2515_readreg(BYTE ch, BYTE addr);
 void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data);
-void mcp2515_recv(BYTE ch, BYTE cmd, struct canmsg_t* msg);
-void mcp2515_cntchk(struct canmsg_t* msg, unsigned long counter);
-void mcp2515_errchk(struct canmsg_t* msg);
+BYTE mcp2515_status(BYTE ch);
+void mcp2515_recv(BYTE ch, BYTE cmd, struct msgstr_t* msg);
+void mcp2515_send(BYTE ch, struct canmsg_t* msg);
+void mcp2515_cntchk(struct msgstr_t* msg, unsigned long counter);
+void mcp2515_errchk(struct msgstr_t* msg);
 BYTE is_received(BYTE ch);
 BYTE gps_recv();
-BYTE gps_parse(struct canmsg_t* msg);
+BYTE gps_parse(struct msgstr_t* msg);
 void parse_line(char* line);
 
 void main(void)
@@ -270,7 +285,7 @@ void main(void)
       if (recv_count > peek_recv_count)
         peek_recv_count = recv_count;
       is_sending = 1;
-      struct canmsg_t* msg = &msgbuffer[send_idx];
+      struct msgstr_t* msg = &msgbuffer[send_idx];
       usb_putch(msg->str[msg->str_idx++]);
       if (msg->str_idx == msg->str_sz) {
         send_idx = (send_idx + 1) % MSG_MAX;
@@ -415,7 +430,16 @@ void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data)
   spi_disable(ch);
 }
 
-void mcp2515_recv(BYTE ch, BYTE cmd, struct canmsg_t* msg)
+BYTE mcp2515_status(BYTE ch)
+{
+  spi_enable(ch);
+  spi_transmit(SPI_STAT_READ);
+  BYTE status = spi_transmit(0xFF);
+  spi_disable(ch);
+  return status;
+}
+
+void mcp2515_recv(BYTE ch, BYTE cmd, struct msgstr_t* msg)
 {
   WORD id;
   BYTE dlc;
@@ -466,7 +490,49 @@ void mcp2515_recv(BYTE ch, BYTE cmd, struct canmsg_t* msg)
   msg->str_sz = 31; // 固定長
 }
 
-void mcp2515_cntchk(struct canmsg_t* msg, unsigned long counter)
+void mcp2515_send(BYTE ch, struct canmsg_t* msg)
+{
+  BYTE status = mcp2515_status(ch);
+  BYTE loadcmd; // TXバッファロードSPIコマンド
+  BYTE rtscmd;  // 送信要求SPIコマンド
+  if (status & 0x04 == 0) {
+    // 送信バッファ0(TXB0)が空いている
+    loadcmd = SPI_TXB0_LOAD;
+    rtscmd  = SPI_TXB0_RTS;
+  } else if (status & 0x10 == 0) {
+    // 送信バッファ1(TXB1)が空いている
+    loadcmd = SPI_TXB1_LOAD;
+    rtscmd  = SPI_TXB1_RTS;
+  } else if (status & 0x40 == 0) {
+    // 送信バッファ2(TXB2)が空いている
+    loadcmd = SPI_TXB2_LOAD;
+    rtscmd  = SPI_TXB2_RTS;
+  } else {
+    return; // エラー(現状呼び出し元には通知していない)
+  }
+
+  // 送信バッファへのロード開始
+  spi_enable(ch);
+  spi_transmit(loadcmd);
+
+  spi_transmit(msg->id >> 3);
+  spi_transmit(msg->id << 5);
+  spi_transmit(0);
+  spi_transmit(0);
+  spi_transmit(msg->dlc);
+  for (BYTE i = 0; i < msg->dlc; i++)
+    spi_transmit(msg->data[i]);
+  spi_disable(ch);
+
+  // ここにdelayがいるかも
+
+  // 送信開始
+  spi_enable(ch);
+  spi_transmit(rtscmd);
+  spi_disable(ch);
+}
+
+void mcp2515_cntchk(struct msgstr_t* msg, unsigned long counter)
 {
   msg->str[0] = 'C';
   msg->str[1] = to_ascii[(counter >> 28) & 0x0F];
@@ -483,7 +549,7 @@ void mcp2515_cntchk(struct canmsg_t* msg, unsigned long counter)
   msg->str_sz  = 10; // 固定長
 }
 
-void mcp2515_errchk(struct canmsg_t* msg)
+void mcp2515_errchk(struct msgstr_t* msg)
 {
   BYTE eflg1 = mcp2515_readreg(0, EFLG);
   BYTE eflg2 = mcp2515_readreg(1, EFLG);
@@ -575,7 +641,7 @@ BYTE gps_recv()
   return 0; // データなし
 }
 
-BYTE gps_parse(struct canmsg_t* msg)
+BYTE gps_parse(struct msgstr_t* msg)
 {
   unsigned long t = time_msec;
 
