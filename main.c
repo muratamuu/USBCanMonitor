@@ -539,7 +539,7 @@ BYTE mcp2515_send(struct canmsg_t* msg)
   spi_disable(ch);
 
   // ここにdelayがいるかも
-  _delay(1);
+  //_delay(1);
 
   // 送信開始
   spi_enable(ch);
