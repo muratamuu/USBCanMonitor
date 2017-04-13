@@ -85,16 +85,21 @@ struct msgstr_t
 struct canmsg_t
 {
   WORD id;
+  BYTE ch;
   BYTE dlc;
   BYTE data[8];
 };
 
-// CANメッセージバッファ
+// CANメッセージバッファ(受信用)
 #define MSG_MAX (6)
 struct msgstr_t msgbuffer[MSG_MAX];
 
 BYTE peek_recv_count = 0;
 unsigned long max_recv_count = 0;
+
+// CANメッセージバッファ(送信用)
+struct canmsg_t sendmsg;
+BYTE is_sendmsg_ready = 0;
 
 // 文字列変換テーブル
 const char* to_ascii = "0123456789ABCDEF";
@@ -111,7 +116,8 @@ BYTE gpsline[GPS_LINE_MAX];
 BYTE gpslinepos = 0;
 
 // USB受信バッファ
-#define LINE_MAX (4)
+#define LINE_MAX (23) // T13B481122334455667788 (22+1) 送信コマンドが長い
+                      // T ch=1 id=3B4 dlc=8
 BYTE line[LINE_MAX];
 BYTE linepos = 0;
 
@@ -136,13 +142,16 @@ BYTE mcp2515_readreg(BYTE ch, BYTE addr);
 void mcp2515_modreg(BYTE ch, BYTE addr, BYTE mask, BYTE data);
 BYTE mcp2515_status(BYTE ch);
 void mcp2515_recv(BYTE ch, BYTE cmd, struct msgstr_t* msg);
-void mcp2515_send(BYTE ch, struct canmsg_t* msg);
+BYTE mcp2515_send(struct canmsg_t* msg);
 void mcp2515_cntchk(struct msgstr_t* msg, unsigned long counter);
 void mcp2515_errchk(struct msgstr_t* msg);
 BYTE is_received(BYTE ch);
 BYTE gps_recv();
 BYTE gps_parse(struct msgstr_t* msg);
 void parse_line(char* line);
+BYTE parse_hex(char c);
+void parse_trans_line(char* line, struct canmsg_t* msg);
+void debug_step();
 
 void main(void)
 {
@@ -239,6 +248,9 @@ void main(void)
       recv_idx = (recv_idx + 1) % MSG_MAX;
       mode &= ~MODE_MCNTCHK;
     }
+    // CAN送信処理
+    if (is_sendmsg_ready)
+      is_sendmsg_ready = mcp2515_send(&sendmsg);
 
     for (BYTE ch = 0; ch < 4; ++ch) {
       if (is_received(ch)) { // CAN受信/エラー割り込みチェック
@@ -490,8 +502,10 @@ void mcp2515_recv(BYTE ch, BYTE cmd, struct msgstr_t* msg)
   msg->str_sz = 31; // 固定長
 }
 
-void mcp2515_send(BYTE ch, struct canmsg_t* msg)
+// 0:OK 1:エラー
+BYTE mcp2515_send(struct canmsg_t* msg)
 {
+  BYTE ch = msg->ch-1;
   BYTE status = mcp2515_status(ch);
   BYTE loadcmd; // TXバッファロードSPIコマンド
   BYTE rtscmd;  // 送信要求SPIコマンド
@@ -508,7 +522,7 @@ void mcp2515_send(BYTE ch, struct canmsg_t* msg)
     loadcmd = SPI_TXB2_LOAD;
     rtscmd  = SPI_TXB2_RTS;
   } else {
-    return; // エラー(現状呼び出し元には通知していない)
+    return 1; // エラー(現状呼び出し元には通知していない)
   }
 
   // 送信バッファへのロード開始
@@ -525,11 +539,13 @@ void mcp2515_send(BYTE ch, struct canmsg_t* msg)
   spi_disable(ch);
 
   // ここにdelayがいるかも
+  _delay(1);
 
   // 送信開始
   spi_enable(ch);
   spi_transmit(rtscmd);
   spi_disable(ch);
+  return 0;
 }
 
 void mcp2515_cntchk(struct msgstr_t* msg, unsigned long counter)
@@ -752,7 +768,38 @@ void parse_line(char* line)
     if (line[1] == '8') mcp2515_bitrate_allch(BITRATE_1M);
     if (line[1] == '9') mcp2515_bitrate_allch(BITRATE_200K);
   }
+  else if (line[0] == 'T') {
+    // CAN送信
+    if (!is_sendmsg_ready) {
+      parse_trans_line(line, &sendmsg);
+      is_sendmsg_ready = 1;
+    }
+  }
   usb_putch('\r');
+}
+
+BYTE parse_hex(char c)
+{
+  BYTE value = 0;
+  if (c >= '0' && c <= '9')
+    value = c - '0';
+  if (c >= 'A' && c <= 'F')
+    value = c - 'A' + 10;
+  if (c >= 'a' && c <= 'f')
+    value = c - 'a' + 10;
+  return value;
+}
+
+void parse_trans_line(char* line, struct canmsg_t* msg)
+{
+  msg->ch = parse_hex(line[1]);
+  msg->id = ((WORD)parse_hex(line[2]) << 8) |
+                   parse_hex(line[3]) << 4  |
+                   parse_hex(line[4]);
+  msg->dlc = parse_hex(line[5]);
+  for (BYTE i = 0; i < msg->dlc; i++)
+    msg->data[i] = parse_hex(line[6+i]) << 4 |
+                   parse_hex(line[7+i]);
 }
 
 void interrupt isr()
@@ -763,4 +810,9 @@ void interrupt isr()
     INTCONbits.TMR0IF = 0;
     time_msec += 1;
   }
+}
+
+void debug_step()
+{
+  mcp2515_modreg(3, BFPCTRL, 0x20, 0x20);
 }
