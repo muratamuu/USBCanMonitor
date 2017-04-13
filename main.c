@@ -151,7 +151,7 @@ BYTE gps_parse(struct msgstr_t* msg);
 void parse_line(char* line);
 BYTE parse_hex(char c);
 void parse_trans_line(char* line, struct canmsg_t* msg);
-void debug_step();
+void debug_step(BYTE ch);
 
 void main(void)
 {
@@ -509,15 +509,15 @@ BYTE mcp2515_send(struct canmsg_t* msg)
   BYTE status = mcp2515_status(ch);
   BYTE loadcmd; // TXバッファロードSPIコマンド
   BYTE rtscmd;  // 送信要求SPIコマンド
-  if (status & 0x04 == 0) {
+  if ((status & 0x04) == 0) {
     // 送信バッファ0(TXB0)が空いている
     loadcmd = SPI_TXB0_LOAD;
     rtscmd  = SPI_TXB0_RTS;
-  } else if (status & 0x10 == 0) {
+  } else if ((status & 0x10) == 0) {
     // 送信バッファ1(TXB1)が空いている
     loadcmd = SPI_TXB1_LOAD;
     rtscmd  = SPI_TXB1_RTS;
-  } else if (status & 0x40 == 0) {
+  } else if ((status & 0x40) == 0) {
     // 送信バッファ2(TXB2)が空いている
     loadcmd = SPI_TXB2_LOAD;
     rtscmd  = SPI_TXB2_RTS;
@@ -798,8 +798,8 @@ void parse_trans_line(char* line, struct canmsg_t* msg)
                    parse_hex(line[4]);
   msg->dlc = parse_hex(line[5]);
   for (BYTE i = 0; i < msg->dlc; i++)
-    msg->data[i] = parse_hex(line[6+i]) << 4 |
-                   parse_hex(line[7+i]);
+    msg->data[i] = parse_hex(line[6+i*2]) << 4 |
+                   parse_hex(line[6+i*2+1]);
 }
 
 void interrupt isr()
@@ -812,7 +812,7 @@ void interrupt isr()
   }
 }
 
-void debug_step()
+void debug_step(BYTE ch)
 {
-  mcp2515_modreg(3, BFPCTRL, 0x20, 0x20);
+  mcp2515_modreg(ch, BFPCTRL, 0x20, 0x20);
 }
