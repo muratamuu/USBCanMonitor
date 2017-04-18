@@ -20,6 +20,11 @@ $ make
 $ make flash
 ```
 
+または
+```
+$ mphidflash -write main.hex -n -reset
+```
+
 ### シリアルコマンド
 
 - 通常モードで送受信開始
