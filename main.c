@@ -1,6 +1,8 @@
 #pragma config PLLEN = ON
 #pragma config FCMEN = ON
 
+#define VERSION 1
+
 #include <xc.h>
 #include "usb_cdc.h"
 #include <string.h>
@@ -50,8 +52,9 @@
 #define RXB0CTRL (0x60) // BIT_MOD可能
 #define RXB1CTRL (0x70) // BIT_MOD可能
 
+#if VERSION == 1
 // MCP2515ビットタイミング定義(CNF1,CNF2,CNF3) 24MHz用
-// 全定義SJW=4, SampleTime=1回
+// 全定義SJW=4, SampleTime=1回 Sampling Rate 60-70%
 #define BITRATE_10K  0xFB, 0xAD, 0x06 // BRP=60, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
 #define BITRATE_20K  0xDD, 0xAD, 0x06 // BRP=30, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
 #define BITRATE_50K  0xCB, 0xAD, 0x06 // BRP=12, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
@@ -62,9 +65,28 @@
 #define BITRATE_500K 0xC1, 0x9A, 0x03 // BRP=2,  PRSEG=3, PS1=4, PS2=4, SamplePt=66.67%
 #define BITRATE_800K 0xC0, 0xA3, 0x04 // BRP=1,  PRSEG=4, PS1=5, PS2=5, SamplePt=66.67%
 #define BITRATE_1M   0xC0, 0x9A, 0x03 // BRP=1,  PRSEG=4, PS1=3, PS2=4, SamplePt=66.67%
+#elif VERSION == 2
+// MCP2515ビットタイミング定義(CNF1,CNF2,CNF3) 20MHz用
+// 全定義SJW=4, SampleTime=1回 Sampling Rate 60-70%
+#define BITRATE_10K  0xF1, 0xAD, 0x06 // BRP=50, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_20K  0xD8, 0xAD, 0x06 // BRP=25, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_50K  0xC9, 0xAD, 0x06 // BRP=10, PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_100K 0xC4, 0xAD, 0x06 // BRP=5,  PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_125K 0xC3, 0xAD, 0x06 // BRP=4,  PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_200K 0xC4, 0x92, 0x02 // BRP=5,  PRSEG=3, PS1=3, PS2=3, SamplePt=70.00%
+#define BITRATE_250K 0xC1, 0xAD, 0x06 // BRP=2,  PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_500K 0xC0, 0xAD, 0x06 // BRP=1,  PRSEG=6, PS1=6, PS2=7, SamplePt=65%
+#define BITRATE_800K 0xC0, 0x93, 0x03 // BRP=1,  PRSEG=3, PS1=4, PS2=4, SamplePt=66.67% (833.3kbps)
+#define BITRATE_1M   0xC0, 0x92, 0x03 // BRP=1,  PRSEG=3, PS1=3, PS2=3, SamplePt=70.00%
+#endif
 
+#if VERSION == 1
 // システムクロック48MHz (__delay_msマクロ用)
 #define _XTAL_FREQ 48000000
+#elif VERSION == 2
+// システムクロック40MHz (__delay_msマクロ用)
+#define _XTAL_FREQ 40000000
+#endif
 
 typedef unsigned char  BYTE;
 typedef unsigned short WORD;
@@ -167,7 +189,11 @@ void main(void)
 
   // SPI設定
   SSPSTATbits.CKE   = 1;  // クロックがアクティブからアイドルで送信する
+#if VERSION == 1
   SSPCON1bits.SSPM  = 1;  // SPIクロック 1:FOSC/16 48MHz/16=3MHz
+#elif VERSION == 2
+  SSPCON1bits.SSPM  = 0;  // SPIクロック 0:FOSC/4  40MHz/4=10MHz
+#endif
   SSPCON1bits.SSPEN = 1;  // MSSP有効
 
   // SPIバッファクリア
@@ -201,7 +227,7 @@ void main(void)
   mcp2515_init(2);
   mcp2515_init(3);
 
-  OSCCON = 0x30;
+  //OSCCON = 0x30; // 1MHz
 
   // USB初期化
   usb_init();
@@ -374,7 +400,7 @@ void mcp2515_reset(BYTE ch)
 void mcp2515_init(BYTE ch)
 {
   // コンフィグモードに移行
-  // クロック出力 Fosc/2 24MHz/2=12MHz
+  // クロック出力 Fosc/2 24MHz/2=12MHz (VERSION:2 20MHz/2=10MHz)
   mcp2515_writereg(ch, CANCTRL, 0x85);
   // RXB0,RXB1でフィルタマスクを使用しない(ダブルバッファON)
   //mcp2515_modreg(ch, RXB0CTRL, 0x64, 0x64);
