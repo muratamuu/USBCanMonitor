@@ -269,7 +269,6 @@ void main(void)
           recv_idx = (recv_idx + 1) % MSG_MAX;
           max_recv_count++;
         }
-
         if (reason & 0x02 && recv_count < MSG_MAX) { // RXB1受信割り込み
           mcp2515_recv(ch, SPI_RXB1_READ, &msgbuffer[recv_idx]);
           recv_count++;
@@ -732,8 +731,8 @@ void parse_line(char* line)
     mcp2515_modreg(2, CANCTRL, 0xE0, 0x80);
     mcp2515_modreg(3, CANCTRL, 0xE0, 0x80);
     mode = MODE_CONFIG;
-    peek_recv_count = 0;
-    max_recv_count = 0;
+    //peek_recv_count = 0; // クリアしない
+    //max_recv_count = 0;
     recv_count = 0;
     recv_idx = 0;
     send_idx = 0;
