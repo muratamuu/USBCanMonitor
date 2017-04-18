@@ -1,5 +1,11 @@
 # USBCanMonitor
 
+## ダウンロード
+
+```
+$ git clone http://github.com/muratamuu/USBCanMonitor.git
+```
+
 ## コンパイル
 
 ```
